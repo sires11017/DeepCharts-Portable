@@ -1,6 +1,6 @@
 import os
-import socket
-import subprocess
+
+
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
@@ -8,33 +8,11 @@ REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG")
 
 
-def _detect_lan_ip():
-    try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | "
-             "Sort-Object RouteMetric | Select-Object -First 1 | ForEach-Object { "
-             "(Get-NetIPAddress -InterfaceIndex $_.InterfaceIndex -AddressFamily IPv4).IPAddress })"],
-            capture_output=True, text=True, timeout=5,
-        )
-        ip = result.stdout.strip()
-        if ip:
-            return ip
-    except Exception:
-        pass
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
-    except Exception:
-        return "127.0.0.1"
-
-
 VOL_HIST_HOST = os.environ.get("VOL_HIST_HOST", "0.0.0.0")
 VOL_HIST_PORT = int(os.environ.get("VOL_HIST_PORT", "12010"))
 VOL_HIST_HOSTS_ENTRY = os.environ.get(
     "VOL_HIST_HOSTS_ENTRY",
-    f"{_detect_lan_ip()}  depth-it.historical.deepcharts.com",
+    "127.0.0.1  depth-it.historical.deepcharts.com",
 )
 
 BRIDGE_DEFAULT_PORT = int(os.environ.get("BRIDGE_DEFAULT_PORT", "10050"))

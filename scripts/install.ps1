@@ -68,27 +68,14 @@ popd
 
 # -- 3. Configure hosts file --
 Write-Host "[3/8] Configuring hosts file..."
-$lanIp = & {
-    $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
-    if ($route) {
-        $addr = Get-NetIPAddress -InterfaceIndex $route.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($addr) { return $addr.IPAddress }
-    }
-    try {
-        $sock = New-Object System.Net.Sockets.UdpClient
-        $sock.Connect("8.8.8.8", 80)
-        $ip = ($sock.Client.LocalEndPoint -split ":")[0]
-        $sock.Close()
-        return $ip
-    } catch { return "127.0.0.1" }
-}
-Write-Host "  LAN IP: $lanIp"
+$hostsIp = "127.0.0.1"
+Write-Host "  Using: $hostsIp (always localhost — works on any network)"
 
 $hostsEntries = @(
-    "$lanIp demoapi.cqg.com",
-    "$lanIp api.cqg.com",
-    "$lanIp depth-it.historical.deepcharts.com",
-    "$lanIp data-b.historical.deepcharts.com"
+    "$hostsIp demoapi.cqg.com",
+    "$hostsIp api.cqg.com",
+    "$hostsIp depth-it.historical.deepcharts.com",
+    "$hostsIp data-b.historical.deepcharts.com"
 )
 $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
 $changed = $false

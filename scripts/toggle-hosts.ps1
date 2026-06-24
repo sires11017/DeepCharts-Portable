@@ -1,21 +1,7 @@
-# Detect LAN IP via default route
-$ip = $null
-try {
-    $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Sort-Object RouteMetric | Select-Object -First 1
-    if ($route) {
-        $iface = Get-NetIPAddress -InterfaceIndex $route.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
-        if ($iface) { $ip = $iface.IPAddress }
-    }
-} catch { Write-Host "Route detection failed, using fallback..." -ForegroundColor Yellow }
-# Fallback: first non-loopback, non-well-known IPv4 address
-if (-not $ip) {
-    $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
-        $_.IPAddress -ne '127.0.0.1' -and $_.SuffixOrigin -ne 'WellKnown'
-    } | Select-Object -First 1).IPAddress
-}
-if (-not $ip) { $ip = '127.0.0.1' }
+# Always use 127.0.0.1 — works on any network, no IP detection needed
+$ip = "127.0.0.1"
 Write-Host ""
-Write-Host "Detected LAN IP: $ip" -ForegroundColor Cyan
+Write-Host "Using: $ip (always localhost)" -ForegroundColor Cyan
 Write-Host ""
 # Hosts entries needed
 $entries = @(
