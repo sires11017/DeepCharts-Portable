@@ -209,27 +209,32 @@ if (Test-Path $tempsDir) {
     Write-Host "  (userdata/ not found - run template backup first)"
 }
 
-# -- 7. Create scheduled task --
-Write-Host "[7/9] Creating scheduled task 'DeepChartsProxy'..."
-$taskName = "DeepChartsProxy"
-$existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Host "  [SKIP] Task '$taskName' already exists"
+# -- 7. Fix .NET XML serializer (eliminates "system file not specified" error) --
+Write-Host "[7/10] Fixing .NET XML serializer..."
+$ngen = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ngen.exe"
+if (Test-Path $ngen) {
+    & $ngen install "mscorlib.XmlSerializers, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" 2>&1 | Out-Null
+    & $ngen update 2>&1 | Out-Null
+    Write-Host "[+] XML serializer native images generated"
 } else {
-    $proxyScript = Join-Path $scriptRoot "proxy_service.ps1"
-    if (Test-Path $proxyScript) {
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$proxyScript`""
-        $trigger = New-ScheduledTaskTrigger -AtLogOn
-        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden
-        $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force
-        Start-ScheduledTask -TaskName $taskName
-        Write-Host "[+] Task '$taskName' created and started"
-    }
+    Write-Host "  (ngen.exe not found - bridge may show non-fatal error)"
 }
 
-# -- 8. Add Windows Defender exclusions --
-Write-Host "[8/9] Adding Windows Defender exclusions..."
+# -- 8. Create auto-start on boot --
+Write-Host "[8/10] Setting up auto-start on boot..."
+$startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+$startupBat = Join-Path $scriptRoot "startup.bat"
+$startupTarget = Join-Path $startupFolder "DeepCharts-startup.bat"
+if (Test-Path $startupBat) {
+    Copy-Item -Path $startupBat -Destination $startupTarget -Force
+    Write-Host "[+] Startup script installed to $startupTarget"
+    Write-Host "    DeepCharts will auto-start on every login (no admin needed)"
+} else {
+    Write-Host "  (startup.bat not found in scripts/)"
+}
+
+# -- 9. Add Windows Defender exclusions --
+Write-Host "[9/10] Adding Windows Defender exclusions..."
 $paths = @($root, (Join-Path $root "app"))
 foreach ($p in $paths) {
     if (Test-Path $p) {
@@ -256,7 +261,7 @@ Write-Host "[+] Desktop shortcut created: $shortcutPath"
 
 # Quick proxy test - verify Python can start the scripts
 Write-Host ""
-Write-Host "[9/9] Verifying proxy can start..."
+Write-Host "[10/10] Verifying proxy can start..."
 $testResult = & $pythonFull -c "import sys; print('OK')" 2>&1
 if ($testResult -eq "OK") {
     Write-Host "[+] Python can execute scripts"
