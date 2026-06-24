@@ -31,20 +31,46 @@ Write-Host "[*] Repo root: $root"
 
 # -- 1. Prerequisites --
 Write-Host "[1/8] Checking prerequisites..."
-$pythonExe = "python"
-try {
-    $v = & $pythonExe --version 2>&1
-    if ($v -notmatch "Python 3\.\d+") { throw "not found" }
-    Write-Host "[+] Python: $v"
-} catch {
-    foreach ($exe in @("python3.exe", "python.exe")) {
-        try {
-            $v = & $exe --version 2>&1
-            if ($v -match "Python 3\.\d+") { $pythonExe = $exe; break }
-        } catch {}
-    }
-    if (-not $pythonExe) { Write-Host "[!] Python 3 not found. Install Python 3.12+"; exit 1 }
+$pythonExe = $null
+
+# Try common Python commands
+foreach ($exe in @("python", "python3", "py -3")) {
+    try {
+        $v = & $exe --version 2>&1
+        if ($v -match "Python 3\.\d+") { $pythonExe = $exe; Write-Host "[+] Python: $v ($exe)"; break }
+    } catch {}
 }
+
+# If not in PATH, search common install locations
+if (-not $pythonExe) {
+    $searchPaths = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+        "C:\Python3*\python.exe",
+        "$env:ProgramFiles\Python3*\python.exe",
+        "$env:ProgramFiles(x86)\Python3*\python.exe"
+    )
+    foreach ($pattern in $searchPaths) {
+        $found = Resolve-Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            $v = & $found.Path --version 2>&1
+            if ($v -match "Python 3\.\d+") { $pythonExe = $found.Path; Write-Host "[+] Python: $v ($pythonExe)"; break }
+        }
+    }
+}
+
+if (-not $pythonExe) {
+    Write-Host "[!] Python 3 not found."
+    Write-Host "    Install from https://www.python.org/downloads/"
+    Write-Host "    IMPORTANT: Check 'Add Python to PATH' during install"
+    exit 1
+}
+
+# Resolve full Python path for SYSTEM context (scheduled task)
+$pythonFull = (Get-Command $pythonExe -ErrorAction SilentlyContinue).Source
+if (-not $pythonFull) { $pythonFull = $pythonExe }
+$pythonConfig = Join-Path $root ".python_path"
+Set-Content -Path $pythonConfig -Value $pythonFull -NoNewline
+Write-Host "[+] Python path saved: $pythonFull"
 
 $dotnet = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name Release -ErrorAction SilentlyContinue
 if (-not $dotnet -or $dotnet.Release -lt 528040) {
