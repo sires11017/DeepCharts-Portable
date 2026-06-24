@@ -315,6 +315,7 @@ async def forward_client_to_cqg(client_r, cqg_w, client_w, initial_remaining=b""
     buf = FrameBuffer()
     if initial_remaining:
         buf.feed(initial_remaining)
+    frame_count = 0
     try:
         while True:
             while True:
@@ -351,9 +352,13 @@ async def forward_client_to_cqg(client_r, cqg_w, client_w, initial_remaining=b""
                 else:
                     cqg_w.write(raw_frame)
 
+                frame_count += 1
+                if frame_count % 100 == 0:
+                    log.info(f"  [C->S] Forwarded {frame_count} frames so far")
+
             chunk = await client_r.read(65536)
             if not chunk:
-                log.info("  [C->S] Client closed connection.")
+                log.info(f"  [C->S] Client closed connection. Total frames forwarded: {frame_count}")
                 break
             buf.feed(chunk)
 
@@ -372,7 +377,7 @@ async def forward_client_to_cqg(client_r, cqg_w, client_w, initial_remaining=b""
             await cqg_w.drain()
 
     except Exception as e:
-        log.error(f"  [C->S] Error: {e}")
+        log.error(f"  [C->S] Error after {frame_count} frames: {e}")
 
 
 async def run_in_thread(func, *args):
@@ -384,11 +389,12 @@ async def run_in_thread(func, *args):
 async def forward_cqg_to_client(cqg_r, client_w, is_historical=False):
     http_done = False
     buf = FrameBuffer()
+    frame_count = 0
     try:
         while True:
             chunk = await cqg_r.read(65536)
             if not chunk:
-                log.info("  [S->C] CQG server closed connection.")
+                log.info(f"  [S->C] CQG server closed connection. Total frames forwarded: {frame_count}")
                 break
             buf.feed(chunk)
 
@@ -435,10 +441,14 @@ async def forward_cqg_to_client(cqg_r, client_w, is_historical=False):
                 else:
                     client_w.write(raw_frame)
 
+                frame_count += 1
+                if frame_count % 100 == 0:
+                    log.info(f"  [S->C] Forwarded {frame_count} frames so far")
+
             await client_w.drain()
 
     except Exception as e:
-        log.error(f"  [S->C] Error: {e}")
+        log.error(f"  [S->C] Error after {frame_count} frames: {e}")
 
 
 def process_and_patch_server_msg(payload: bytes, fin: int, opcode: int):
@@ -635,8 +645,6 @@ def is_historical_route(sni, path):
     """Determine if this connection should be routed to the local mock historical server."""
     if sni and ("historical" in sni or "deepcharts" in sni):
         return True
-    if path == "/":
-        return True
     return False
 
 
@@ -668,12 +676,18 @@ async def handle(client_r, client_w):
             parts = first_line.split()
             if len(parts) > 1:
                 path = parts[1]
+            # Log full handshake headers for debugging
+            for hdr_line in handshake.splitlines()[1:]:
+                decoded = hdr_line.decode(errors='replace')
+                if decoded.lower().startswith('host:'):
+                    log.info(f"[+] Client Host header: {decoded}")
     except Exception as e:
         log.warning(f"[-] Failed to read HTTP handshake: {e}")
         if initial_buf:
             remaining = bytes(initial_buf)
 
     is_historical = is_historical_route(sni, path)
+    log.info(f"[ROUTING] sni='{sni}' path='{path}' -> {'HISTORICAL (local mock)' if is_historical else 'LIVE (upstream CQG)'}")
 
     try:
         if is_historical:

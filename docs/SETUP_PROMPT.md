@@ -31,7 +31,7 @@ Right-click PowerShell -> Run as Administrator, then:
 This will:
 1. Verify Python and .NET prerequisites
 2. Generate CA certificates in certs/mitm_ca/
-3. Add hosts file entries for CQG domains
+3. Add hosts file entries for CQG domains (127.0.0.1)
 4. Install Python dependencies (cryptography, websockets, protobuf)
 5. Compile the launcher (launcher/Launcher.cs -> Deepchart.exe)
 6. Copy templates from userdata/ to Documents\Deepchart\
@@ -48,36 +48,51 @@ After the installer completes, check these:
 
 Expected: Both ports show LISTENING.
 
-### Step 5: Launch
+### Step 5: Launch Deepchart
 
-Close the Administrator PowerShell. Navigate to your Documents\DeepCharts folder and double-click Deepchart.exe. Everything starts automatically.
+Close the Administrator PowerShell. Open a regular PowerShell and run:
+
+    & "$env:USERPROFILE\Documents\DeepCharts\Deepchart.exe"
+
+Or navigate to your Documents\DeepCharts folder and double-click Deepchart.exe.
 
 To pin to taskbar: right-click Deepchart.exe -> Pin to taskbar.
 
-### Step 6: Connect in Deepchart
+### Step 6: Connect in Deepchart (IMPORTANT - do not skip)
 
-1. Open Deepchart
-2. Go to Connections -> Add New
-3. Select CQG
+Once Deepchart opens:
+1. Click "Connections" in the top menu
+2. Click "Add New"
+3. Select "CQG" as the connection type
 4. Enable "Use Demo Credentials"
-5. Enter your AMP/CQG demo credentials
-6. Click Connect
+5. Enter your AMP/CQG demo username and password
+6. Click "Connect"
+7. Wait for the connection status to show "Connected"
+8. Open a chart — it should now show live price data
 
-### If Things Break
+### Step 7: Verify Data Flow
 
-Run the diagnostic script to see what's wrong:
+If the chart shows "building chart" or no data:
+1. Kill all processes: Get-Process python,Deepchart,Volumetrica* -ErrorAction SilentlyContinue | Stop-Process -Force
+2. Re-launch Deepchart.exe
+3. Reconnect in Connections -> CQG -> Demo Credentials -> Connect
+
+If still no data, run the diagnostic:
 
     powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Documents\DeepCharts\scripts\diagnose.ps1"
 
 Copy the full output and send it for troubleshooting.
+
+### If Things Break
 
 | Problem | Fix |
 |---------|-----|
 | Port 443 permission denied | Run PowerShell as Admin |
 | Python not found | Reinstall with "Add to PATH" checked |
 | No module named... | pip install -r proxy\mitm\requirements.txt |
-| No data after connect | Run .\scripts\toggle-hosts.ps1 as Admin |
+| No data after connect | Run .\scripts\toggle-hosts.ps1 as Admin, then relaunch |
 | Deepchart won't start | Kill all: Get-Process python,Deepchart,Volumetrica* \| Stop-Process -Force, then relaunch |
+| "Building chart" forever | Run diagnose.ps1, copy output for troubleshooting |
 
 ### Repo Structure Reference
 

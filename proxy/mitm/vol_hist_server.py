@@ -118,6 +118,12 @@ async def handle_client(ws):
         if session_key:
             sig = get_powershell_signature(session_key)
 
+            if not sig:
+                log.warning("  [RESPOND] Signature generation failed — sending unsigned fallback")
+                compressed = build_keepalive()
+                await ws.send(compressed)
+                return
+
             sig_bytes = sig.encode('ascii')
             inner_bytes = b'\x20\x01\x2a' + encode_varint(len(sig_bytes)) + sig_bytes
 
@@ -129,7 +135,7 @@ async def handle_client(ws):
             log.info(f"  [SEND] Sending compressed protobuf response ({len(compressed)} bytes)...")
             await ws.send(compressed)
         else:
-            log.warning("  [SESSION KEY] Sending empty/un-signed fallback response.")
+            log.warning("  [SESSION KEY] No session key — sending keepalive fallback.")
             compressed = build_keepalive()
             await ws.send(compressed)
 

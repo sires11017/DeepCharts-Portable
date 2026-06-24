@@ -86,7 +86,6 @@ If Python says "not recognized", install from https://www.python.org/downloads/ 
 
 Step 2: Clone the Repository
 
-    $repoPath = "$env:USERPROFILE\Documents\DeepCharts"
     cd "$env:USERPROFILE\Documents"
     git clone https://github.com/sires11017/DeepCharts-Portable.git DeepCharts
     cd DeepCharts
@@ -107,17 +106,38 @@ Step 4: Verify Installation
 
 Both should show LISTENING.
 
-Step 5: Launch
+Step 5: Launch Deepchart
 
-Close PowerShell. Navigate to $env:USERPROFILE\Documents\DeepCharts and double-click Deepchart.exe.
+Close the Administrator PowerShell. Open a regular PowerShell and run:
 
-Step 6: Connect in Deepchart
+    & "$env:USERPROFILE\Documents\DeepCharts\Deepchart.exe"
 
-    1. Connections -> Add New
-    2. Select CQG
-    3. Enable "Use Demo Credentials"
-    4. Enter your AMP/CQG demo credentials
-    5. Click Connect
+Or navigate to $env:USERPROFILE\Documents\DeepCharts and double-click Deepchart.exe.
+
+Step 6: Connect in Deepchart (IMPORTANT - do not skip)
+
+Once Deepchart opens:
+1. Click "Connections" in the top menu
+2. Click "Add New"
+3. Select "CQG" as the connection type
+4. Enable "Use Demo Credentials"
+5. Enter your AMP/CQG demo username and password
+6. Click "Connect"
+7. Wait for the connection status to show "Connected"
+8. Open a chart — it should now show live price data
+
+Step 7: Verify Data Flow
+
+If the chart shows "building chart" or no data:
+1. Kill all processes: Get-Process python,Deepchart,Volumetrica* -ErrorAction SilentlyContinue | Stop-Process -Force
+2. Re-launch Deepchart.exe
+3. Reconnect in Connections -> CQG -> Demo Credentials -> Connect
+
+If still no data, run the diagnostic:
+
+    powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Documents\DeepCharts\scripts\diagnose.ps1"
+
+Copy the full output and send it for troubleshooting.
 ```
 
 ---
