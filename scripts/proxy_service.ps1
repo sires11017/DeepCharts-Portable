@@ -101,9 +101,14 @@ function Start-HiddenPython($scriptPath, $port) {
         Write-Host "[proxy] Port $port already bound by PID $($existing.Id), assuming running"
         return $existing
     }
-    $proc = Start-Process -FilePath $pythonExe -ArgumentList "`"$scriptPath`"" -WindowStyle Hidden -PassThru -NoNewWindow
-    Write-Host "[proxy] Started $scriptPath (PID $($proc.Id))"
-    return $proc
+    try {
+        $proc = Start-Process -FilePath $pythonExe -ArgumentList "`"$scriptPath`"" -PassThru
+        Write-Host "[proxy] Started $scriptPath (PID $($proc.Id))"
+        return $proc
+    } catch {
+        Write-Host "[proxy] Failed to start $scriptPath: $_"
+        return $null
+    }
 }
 
 function Wait-ForPort($port, $maxSec) {
