@@ -641,9 +641,16 @@ async def server_ping_watchdog(client_w, last_msg_time, stop_event):
 
 
 # ─── Connection handler ─────────────────────────────────────────────────────────
-def is_historical_route(sni, path):
+def is_historical_route(sni, path, host_header=""):
     """Determine if this connection should be routed to the local mock historical server."""
+    # Check SNI
     if sni and ("historical" in sni or "deepcharts" in sni):
+        return True
+    # Check Host header
+    if host_header and ("historical" in host_header or "deepcharts" in host_header):
+        return True
+    # Fallback: path "/" with no SNI is likely historical (bridge connects to / for historical)
+    if not sni and path == "/":
         return True
     return False
 
@@ -658,6 +665,7 @@ async def handle(client_r, client_w):
 
     handshake, remaining = b"", b""
     path = ""
+    host_header = ""
     http_done = False
     try:
         initial_buf = bytearray()
@@ -676,18 +684,19 @@ async def handle(client_r, client_w):
             parts = first_line.split()
             if len(parts) > 1:
                 path = parts[1]
-            # Log full handshake headers for debugging
+            # Extract Host header for routing decisions
             for hdr_line in handshake.splitlines()[1:]:
                 decoded = hdr_line.decode(errors='replace')
                 if decoded.lower().startswith('host:'):
-                    log.info(f"[+] Client Host header: {decoded}")
+                    host_header = decoded.split(':', 1)[1].strip()
+                    log.info(f"[+] Client Host header: {host_header}")
     except Exception as e:
         log.warning(f"[-] Failed to read HTTP handshake: {e}")
         if initial_buf:
             remaining = bytes(initial_buf)
 
-    is_historical = is_historical_route(sni, path)
-    log.info(f"[ROUTING] sni='{sni}' path='{path}' -> {'HISTORICAL (local mock)' if is_historical else 'LIVE (upstream CQG)'}")
+    is_historical = is_historical_route(sni, path, host_header)
+    log.info(f"[ROUTING] sni='{sni}' host='{host_header}' path='{path}' -> {'HISTORICAL (local mock)' if is_historical else 'LIVE (upstream CQG)'}")
 
     try:
         if is_historical:

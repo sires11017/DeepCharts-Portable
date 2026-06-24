@@ -80,8 +80,10 @@ if (-not $pythonExe) {
 }
 
 # Resolve full Python path for SYSTEM context (scheduled task)
-$pythonFull = (Get-Command $pythonExe -ErrorAction SilentlyContinue).Source
-if (-not $pythonFull) { $pythonFull = $pythonExe }
+$pythonCmd = ($pythonExe -split " ")[0]
+$pythonFull = (Get-Command $pythonCmd -ErrorAction SilentlyContinue).Source
+if (-not $pythonFull) { $pythonFull = $pythonCmd }
+# If using py launcher, save just the exe path (not "py -3")
 $pythonConfig = Join-Path $root ".python_path"
 Set-Content -Path $pythonConfig -Value $pythonFull -NoNewline
 Write-Host "[+] Python path saved: $pythonFull"
@@ -98,7 +100,11 @@ Write-Host "[2/9] Generating CA certificates..."
 pushd $root
 try {
     pushd (Join-Path $root "proxy\mitm")
-    & $pythonExe -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
+    if ($pythonExe -eq "py -3") {
+        & py -3 -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
+    } else {
+        & $pythonExe -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
+    }
     popd
     Write-Host "[+] CA certificates ready"
 } catch {
