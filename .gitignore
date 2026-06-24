@@ -1,0 +1,11 @@
+logs/
+*.log
+.env
+config_local.py
+*.zip
+__pycache__/
+*.pyc
+.vs/
+*.user
+*.suo
+archive/
