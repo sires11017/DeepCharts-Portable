@@ -17,33 +17,67 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $scriptRoot
 $proxyScript = Join-Path (Join-Path $root "proxy") "mitm\bridge_mitm_proxy.py"
 $histScript   = Join-Path (Join-Path $root "proxy") "mitm\vol_hist_server.py"
-$pythonExe = if ($env:PYTHON_EXE) { $env:PYTHON_EXE } else {
-    $found = $null
-    # 1. Check saved config from installer
+
+# Find Python - try every possible method
+function Find-Python {
+    # 1. Environment variable
+    if ($env:PYTHON_EXE -and (Test-Path $env:PYTHON_EXE -ErrorAction SilentlyContinue)) {
+        return $env:PYTHON_EXE
+    }
+
+    # 2. Saved config from installer
     $configFile = Join-Path $root ".python_path"
     if (Test-Path $configFile) {
         $saved = (Get-Content $configFile -Raw).Trim()
-        if ($saved -and (Test-Path $saved -ErrorAction SilentlyContinue)) { $found = $saved }
-    }
-    # 2. Find Python dynamically
-    if (-not $found) {
-        $candidates = @(
-            (Get-Command python -ErrorAction SilentlyContinue).Source,
-            (Get-Command python3 -ErrorAction SilentlyContinue).Source,
-            "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
-            "C:\Python3*\python.exe",
-            "$env:ProgramFiles\Python3*\python.exe"
-        )
-        foreach ($c in $candidates) {
-            if ($c -and (Test-Path $c -ErrorAction SilentlyContinue)) { $found = $c; break }
-            $expanded = Resolve-Path $c -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($expanded) { $found = $expanded.Path; break }
+        if ($saved -and (Test-Path $saved -ErrorAction SilentlyContinue)) {
+            return $saved
         }
     }
-    if ($found) { $found } else { "python" }
+
+    # 3. Try commands in PATH
+    foreach ($cmd in @("python", "python3")) {
+        try {
+            $info = Get-Command $cmd -ErrorAction SilentlyContinue
+            if ($info -and $info.Source -and (Test-Path $info.Source)) {
+                return $info.Source
+            }
+        } catch {}
+    }
+
+    # 4. Try py launcher
+    try {
+        $pyPath = (Get-Command "py" -ErrorAction SilentlyContinue).Source
+        if ($pyPath) {
+            $test = & $pyPath -3 --version 2>&1
+            if ($test -match "Python 3") {
+                return $pyPath
+            }
+        }
+    } catch {}
+
+    # 5. Search common install locations (wildcards)
+    $searchPatterns = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+        "C:\Python3*\python.exe",
+        "$env:ProgramFiles\Python3*\python.exe",
+        "$env:ProgramFiles(x86)\Python3*\python.exe"
+    )
+    foreach ($pattern in $searchPatterns) {
+        $found = Resolve-Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) {
+            return $found.Path
+        }
+    }
+
+    # 6. Last resort - just return "python" and hope PATH works
+    return "python"
 }
-$proxyPort    = 443
-$histPort     = 12010
+
+$pythonExe = Find-Python
+$proxyPort = 443
+$histPort  = 12010
+
+Write-Host "[proxy] Python: $pythonExe"
 
 # Prevent multiple instances
 $mtxName = "Global\DeepChartsProxyService"
@@ -85,10 +119,8 @@ function Test-ProcessAlive($proc) {
     try { return -not $proc.HasExited } catch { return $false }
 }
 
-# Acquire exclusive volume control to avoid startup races with bridge
 $global:proxyProc = $null
 $global:histProc = $null
-$restartCount = @{}
 
 Write-Host "[proxy] DeepCharts Proxy Service starting..."
 Write-Host "[proxy] Root: $root"

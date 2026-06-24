@@ -80,13 +80,36 @@ if (-not $pythonExe) {
 }
 
 # Resolve full Python path for SYSTEM context (scheduled task)
-$pythonCmd = ($pythonExe -split " ")[0]
-$pythonFull = (Get-Command $pythonCmd -ErrorAction SilentlyContinue).Source
-if (-not $pythonFull) { $pythonFull = $pythonCmd }
-# If using py launcher, save just the exe path (not "py -3")
+$pythonFull = $null
+if ($pythonExe -eq "py -3") {
+    # For py launcher, find the actual python.exe it points to
+    try {
+        $pyWhere = & where.exe py 2>&1 | Select-Object -First 1
+        $pyDir = Split-Path $pyWhere -Parent
+        $pyVersion = & py -3 -c "import sys; print(sys.executable)" 2>&1
+        if ($pyVersion -and (Test-Path $pyVersion)) {
+            $pythonFull = $pyVersion
+        }
+    } catch {}
+    if (-not $pythonFull) { $pythonFull = "py" }
+} else {
+    # For python/python3, get full path
+    try {
+        $whereResult = & where.exe $pythonExe 2>&1 | Select-Object -First 1
+        if ($whereResult -and (Test-Path $whereResult)) {
+            $pythonFull = $whereResult
+        }
+    } catch {}
+    if (-not $pythonFull) {
+        $cmdInfo = Get-Command $pythonExe -ErrorAction SilentlyContinue
+        if ($cmdInfo -and $cmdInfo.Source) { $pythonFull = $cmdInfo.Source }
+    }
+    if (-not $pythonFull) { $pythonFull = $pythonExe }
+}
 $pythonConfig = Join-Path $root ".python_path"
 Set-Content -Path $pythonConfig -Value $pythonFull -NoNewline
 Write-Host "[+] Python path saved: $pythonFull"
+Write-Host "    (Verify: $(Test-Path $pythonFull))"
 
 $dotnet = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name Release -ErrorAction SilentlyContinue
 if (-not $dotnet -or $dotnet.Release -lt 528040) {
@@ -100,11 +123,7 @@ Write-Host "[2/9] Generating CA certificates..."
 pushd $root
 try {
     pushd (Join-Path $root "proxy\mitm")
-    if ($pythonExe -eq "py -3") {
-        & py -3 -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
-    } else {
-        & $pythonExe -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
-    }
+    & $pythonFull -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
     popd
     Write-Host "[+] CA certificates ready"
 } catch {
@@ -157,7 +176,7 @@ if ($changed) {
 Write-Host "[4/9] Installing Python dependencies..."
 $req = Join-Path (Join-Path $root "proxy") "mitm\requirements.txt"
 if (Test-Path $req) {
-    try { & $pythonExe -m pip install -r $req -q 2>$null } catch { Write-Host "  (pip warning - dependencies may already be installed)" }
+    try { & $pythonFull -m pip install -r $req -q 2>$null } catch { Write-Host "  (pip warning - dependencies may already be installed)" }
     Write-Host "[+] Dependencies installed"
 }
 
@@ -234,6 +253,26 @@ $shortcut.WorkingDirectory = $root
 $shortcut.Description = "DeepCharts Portable - One-Click Launch"
 $shortcut.Save()
 Write-Host "[+] Desktop shortcut created: $shortcutPath"
+
+# Quick proxy test - verify Python can start the scripts
+Write-Host ""
+Write-Host "[9/9] Verifying proxy can start..."
+$testResult = & $pythonFull -c "import sys; print('OK')" 2>&1
+if ($testResult -eq "OK") {
+    Write-Host "[+] Python can execute scripts"
+    # Test that the proxy scripts can at least be imported
+    pushd (Join-Path $root "proxy\mitm")
+    $importTest = & $pythonFull -c "import config; print('config OK')" 2>&1
+    popd
+    if ($importTest -eq "config OK") {
+        Write-Host "[+] Proxy config loads correctly"
+    } else {
+        Write-Host "[!] Proxy config import failed: $importTest"
+    }
+} else {
+    Write-Host "[!] Python test failed: $testResult"
+}
+Write-Host ""
 
 # Open the folder so user can pin to taskbar
 Write-Host "[+] Opening folder: $root"
