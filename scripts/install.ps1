@@ -97,26 +97,41 @@ Write-Host "[3/8] Configuring hosts file..."
 $hostsIp = "127.0.0.1"
 Write-Host "  Using: $hostsIp (always localhost — works on any network)"
 
-$hostsEntries = @(
-    "$hostsIp demoapi.cqg.com",
-    "$hostsIp api.cqg.com",
-    "$hostsIp depth-it.historical.deepcharts.com",
-    "$hostsIp data-b.historical.deepcharts.com"
+$hostnames = @(
+    "demoapi.cqg.com",
+    "api.cqg.com",
+    "depth-it.historical.deepcharts.com",
+    "data-b.historical.deepcharts.com"
 )
 $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
+$hostsContent = Get-Content $hostsPath -Encoding ASCII -ErrorAction SilentlyContinue
+if (-not $hostsContent) { $hostsContent = @() }
 $changed = $false
-foreach ($entry in $hostsEntries) {
-    $hostname = ($entry -split " ")[1]
-    $existing = Select-String -Path $hostsPath -Pattern "\b$hostname\b" -SimpleMatch -ErrorAction SilentlyContinue
-    if ($existing) {
-        Write-Host "  [SKIP] $hostname already in hosts"
+
+foreach ($hostname in $hostnames) {
+    # Remove any existing entry for this hostname (wrong IP or duplicate)
+    $existingLine = $hostsContent | Where-Object { $_ -match "\s+$hostname\s*$" -or $_ -match "\s+$hostname$" }
+    if ($existingLine) {
+        $oldIp = ($existingLine -split "\s+")[0]
+        if ($oldIp -ne $hostsIp) {
+            $hostsContent = @($hostsContent | Where-Object { $_ -notmatch "\s+$hostname\s*$" -and $_ -notmatch "\s+$hostname$" })
+            $hostsContent += "$hostsIp $hostname"
+            Write-Host "  [FIX] $hostname $oldIp -> $hostsIp"
+            $changed = $true
+        } else {
+            Write-Host "  [OK] $hostname already correct ($hostsIp)"
+        }
     } else {
-        Add-Content -Path $hostsPath -Value "`n$entry" -NoNewline
-        Write-Host "  [ADD] $entry"
+        $hostsContent += "$hostsIp $hostname"
+        Write-Host "  [ADD] $hostsIp $hostname"
         $changed = $true
     }
 }
-if ($changed) { ipconfig /flushdns | Out-Null; Write-Host "  DNS cache flushed" }
+if ($changed) {
+    $hostsContent | Out-File $hostsPath -Encoding ascii -Force
+    ipconfig /flushdns | Out-Null
+    Write-Host "  DNS cache flushed"
+}
 
 # -- 4. Install Python dependencies --
 Write-Host "[4/8] Installing Python dependencies..."
