@@ -1,6 +1,142 @@
 # DeepCharts Portable
 
-A self-contained, portable DeepCharts trading environment with a CQG MITM proxy, one-click launcher, and all templates/workspaces/indicators bundled.
+A self-contained, portable DeepCharts trading environment with a CQG MITM proxy, one-click launcher, and all templates/workspaces/indicators bundled. Clone → install → launch. One click, everything starts, no console windows.
+
+## Quick Start (New PC)
+
+### Prerequisites
+
+| Requirement | Check | Install if missing |
+|-------------|-------|--------------------|
+| **Windows OS** | `echo %OS%` → `Windows_NT` | N/A |
+| **Python 3.10+** | `python --version` | python.org, check "Add to PATH" |
+| **pip** | `pip --version` | Comes with Python |
+| **Admin access** | `net session` | Need admin for hosts + port 443 |
+| **.NET 4.8** | Already on Win10/11 | N/A |
+
+### Step 1: Clone
+
+```powershell
+cd C:\Users\$env:USERNAME\Documents
+git clone https://github.com/sires11017/DeepCharts-Portable.git DeepCharts
+cd DeepCharts
+```
+
+### Step 2: Install (one-time, as Admin)
+
+```powershell
+.\scripts\install.ps1
+```
+
+What it does:
+1. Verifies Python 3 and .NET 4.8
+2. Generates CA certificates in `certs/mitm_ca/`
+3. Adds hosts file entries for CQG domains (demoapi.cqg.com, api.cqg.com, depth-it.historical.deepcharts.com, data-b.historical.deepcharts.com)
+4. Installs Python dependencies (cryptography, websockets, protobuf)
+5. Compiles the launcher from C# source (`launcher/Launcher.cs` → `Deepchart.exe`)
+6. Copies templates from `userdata/` to `Documents\Deepchart\`
+7. Creates a Windows Scheduled Task `DeepChartsProxy` (runs at login as SYSTEM)
+8. Adds Windows Defender exclusions
+9. Creates desktop shortcut
+
+### Step 3: Launch
+
+Double-click `Deepchart.exe` at the repo root. Or use the desktop shortcut. Everything starts automatically — proxy, bridge, Deepchart. No console windows.
+
+To pin to taskbar: right-click `Deepchart.exe` → Pin to taskbar.
+
+### Step 4: Connect in Deepchart
+
+1. Open Deepchart
+2. Go to Connections → Add New
+3. Select CQG
+4. Enable "Use Demo Credentials"
+5. Enter your AMP/CQG demo credentials
+6. Click Connect
+
+### If Things Break
+
+| Problem | Fix |
+|---------|-----|
+| Port 443 permission denied | Run PowerShell as Admin |
+| Python not found | Reinstall with "Add to PATH" checked |
+| No module named... | `pip install -r proxy\mitm\requirements.txt` |
+| No data after connect | `.\scripts\toggle-hosts.ps1` as Admin |
+| Port 443 occupied by iphlpsvc | `net stop iphlpsvc` |
+| Deepchart won't start | Kill all: `Get-Process python,Deepchart,Volumetrica* \| Stop-Process -Force` then double-click `Deepchart.exe` |
+| Need to use MotiveWave/QuantTower | Run `.\scripts\toggle-hosts.ps1` to remove hosts entries. Run again to re-add for Deepchart. |
+
+---
+
+## AI Agent Setup Prompt
+
+Copy the entire block below and paste it to any AI agent on a fresh PC. It will set up everything automatically.
+
+```
+You are setting up the DeepCharts Portable trading environment on a fresh Windows PC. Follow these steps exactly, in order. Do not skip steps. Do not debug issues unless a step fails — fix the failure before moving on.
+
+Step 1: Check Prerequisites
+
+Run these commands and verify the output before proceeding:
+
+    python --version
+    pip --version
+    Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name Release
+    net session
+
+If Python is missing, install from python.org with "Add to PATH" checked. If .NET 4.8 is missing, it comes pre-installed on Windows 10/11. If you are not admin, open an elevated PowerShell.
+
+Step 2: Clone the Repository
+
+    cd C:\Users\$env:USERNAME\Documents
+    git clone https://github.com/sires11017/DeepCharts-Portable.git DeepCharts
+    cd DeepCharts
+
+Step 3: Run the Installer (as Admin)
+
+    .\scripts\install.ps1
+
+Step 4: Verify Installation
+
+    Get-NetTCPConnection -LocalPort 443 -ErrorAction SilentlyContinue | Select-Object LocalPort, State
+    Get-NetTCPConnection -LocalPort 12010 -ErrorAction SilentlyContinue | Select-Object LocalPort, State
+    Get-ScheduledTask -TaskName "DeepChartsProxy" -ErrorAction SilentlyContinue | Select-Object TaskName, State
+    Get-Item Deepchart.exe | Select-Object Name, Length
+
+Expected: Port 443 LISTENING, Port 12010 LISTENING, DeepChartsProxy Ready, Deepchart.exe ~7168 bytes.
+
+Step 5: Launch
+
+Double-click Deepchart.exe at the repo root.
+
+Step 6: Connect in Deepchart
+
+    1. Connections -> Add New
+    2. Select CQG
+    3. Enable "Use Demo Credentials"
+    4. Enter your AMP/CQG demo credentials
+    5. Click Connect
+```
+
+---
+
+## How It Works
+
+```
+Deepchart.exe ──▶ VolumetricaBridge.exe ──▶ Bridge MITM Proxy ──▶ CQG Servers
+                         │
+                         └──▶ Volumetrica Historical Mock Server
+```
+
+1. **Launcher** (`Deepchart.exe`) — Checks proxy ports, starts VolumetricaBridge + Deepchart.Core.exe. No console window.
+
+2. **`proxy/mitm/bridge_mitm_proxy.py`** — Intercepts Bridge↔CQG WebSocket. Patches logon credentials to `AMPConnect`. Injects synthetic BBA quotes.
+
+3. **`proxy/mitm/vol_hist_server.py`** — Mock historical data server. Responds with compressed protobuf keepalives.
+
+4. **`proxy/cqg/`** — CQG WebAPI protobuf definitions, generated Python code, test scripts.
+
+## Repo Structure
 
 ```
 DeepCharts-Portable/
@@ -33,64 +169,6 @@ DeepCharts-Portable/
 │   └── toggle-hosts.ps1    # Toggle CQG hosts entries
 └── docs/
 ```
-
-## How It Works
-
-```
-Deepchart.exe ──▶ VolumetricaBridge.exe ──▶ Bridge MITM Proxy ──▶ CQG Servers
-                         │
-                         └──▶ Volumetrica Historical Mock Server
-```
-
-1. **Launcher** (`Deepchart.exe`) — Checks proxy ports, starts VolumetricaBridge + Deepchart.Core.exe. No console window.
-
-2. **`proxy/mitm/bridge_mitm_proxy.py`** — Intercepts Bridge↔CQG WebSocket. Patches logon credentials to `AMPConnect`. Injects synthetic BBA quotes.
-
-3. **`proxy/mitm/vol_hist_server.py`** — Mock historical data server. Responds with compressed protobuf keepalives.
-
-4. **`proxy/cqg/`** — CQG WebAPI protobuf definitions, generated Python code, test scripts.
-
-## Fresh-Clone Setup (New PC)
-
-### Prerequisites
-
-| Requirement | Check | Install if missing |
-|-------------|-------|--------------------|
-| **Windows OS** | `echo %OS%` → `Windows_NT` | N/A |
-| **Python 3.10+** | `python --version` | python.org, check "Add to PATH" |
-| **pip** | `pip --version` | Comes with Python |
-| **Admin access** | `net session` | Need admin for hosts + port 443 |
-| **.NET 4.8** | Already on Win10/11 | N/A |
-
-### Step 1: Clone
-
-```powershell
-cd C:\Users\YourName\Documents
-git clone https://github.com/sires11017/DeepCharts-Portable.git DeepCharts
-cd DeepCharts
-```
-
-### Step 2: Install (one-time, as Admin)
-
-```powershell
-.\scripts\install.ps1
-```
-
-What it does:
-1. Verifies Python 3 and .NET 4.8
-2. Generates CA certificates (first run)
-3. Adds hosts file entries for CQG domains
-4. Installs Python dependencies
-5. Compiles the launcher from source
-6. Copies templates to `Documents\Deepchart\`
-7. Creates `DeepChartsProxy` scheduled task (runs at login)
-8. Adds Windows Defender exclusions
-
-### Step 3: Launch
-
-Double-click `Deepchart.exe` at the repo root. Or use the desktop shortcut.
-
-That's it. Everything starts automatically — proxy, bridge, Deepchart. No console windows.
 
 ## Configuration
 
@@ -138,16 +216,6 @@ If you modify `launcher/Launcher.cs`:
 ```
 
 Output: `Deepchart.exe` at repo root.
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| Port 443 permission denied | Run as Admin |
-| Python not found | Reinstall with "Add to PATH" |
-| No module named... | `pip install -r proxy\mitm\requirements.txt` |
-| No data after connect | Re-run `.\scripts\toggle-hosts.ps1` as Admin |
-| Port 443 occupied | `net stop iphlpsvc` or let installer handle it |
 
 ## Logs
 
