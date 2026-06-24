@@ -10,3 +10,6 @@ __pycache__/
 *.suo
 archive/
 .python_path
+*.tmp
+*.bak
+Thumbs.db

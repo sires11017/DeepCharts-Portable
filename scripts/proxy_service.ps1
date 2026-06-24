@@ -18,14 +18,15 @@ $root = Split-Path -Parent $scriptRoot
 $proxyScript = Join-Path (Join-Path $root "proxy") "mitm\bridge_mitm_proxy.py"
 $histScript   = Join-Path (Join-Path $root "proxy") "mitm\vol_hist_server.py"
 $pythonExe = if ($env:PYTHON_EXE) { $env:PYTHON_EXE } else {
+    $found = $null
     # 1. Check saved config from installer
     $configFile = Join-Path $root ".python_path"
     if (Test-Path $configFile) {
-        $saved = Get-Content $configFile -Raw
-        if ($saved -and (Test-Path $saved -ErrorAction SilentlyContinue)) { $saved }
+        $saved = (Get-Content $configFile -Raw).Trim()
+        if ($saved -and (Test-Path $saved -ErrorAction SilentlyContinue)) { $found = $saved }
     }
     # 2. Find Python dynamically
-    if (-not $saved) {
+    if (-not $found) {
         $candidates = @(
             (Get-Command python -ErrorAction SilentlyContinue).Source,
             (Get-Command python3 -ErrorAction SilentlyContinue).Source,
@@ -33,14 +34,13 @@ $pythonExe = if ($env:PYTHON_EXE) { $env:PYTHON_EXE } else {
             "C:\Python3*\python.exe",
             "$env:ProgramFiles\Python3*\python.exe"
         )
-        $found = $null
         foreach ($c in $candidates) {
             if ($c -and (Test-Path $c -ErrorAction SilentlyContinue)) { $found = $c; break }
             $expanded = Resolve-Path $c -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($expanded) { $found = $expanded.Path; break }
         }
-        if ($found) { $found } else { "python" }
     }
+    if ($found) { $found } else { "python" }
 }
 $proxyPort    = 443
 $histPort     = 12010

@@ -29,15 +29,29 @@ Write-Host ""
 
 Write-Host "[*] Repo root: $root"
 
+# -- 0. Kill existing processes --
+Write-Host "[0/9] Stopping existing processes..."
+Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process Volumetrica* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Write-Host "[+] Cleaned up"
+
 # -- 1. Prerequisites --
-Write-Host "[1/8] Checking prerequisites..."
+Write-Host "[1/9] Checking prerequisites..."
 $pythonExe = $null
 
 # Try common Python commands
-foreach ($exe in @("python", "python3", "py -3")) {
+foreach ($exe in @("python", "python3")) {
     try {
         $v = & $exe --version 2>&1
         if ($v -match "Python 3\.\d+") { $pythonExe = $exe; Write-Host "[+] Python: $v ($exe)"; break }
+    } catch {}
+}
+# Also try py launcher
+if (-not $pythonExe) {
+    try {
+        $v = & py -3 --version 2>&1
+        if ($v -match "Python 3\.\d+") { $pythonExe = "py -3"; Write-Host "[+] Python: $v (py -3)"; }
     } catch {}
 }
 
@@ -80,7 +94,7 @@ if (-not $dotnet -or $dotnet.Release -lt 528040) {
 Write-Host "[+] .NET Framework 4.8+"
 
 # -- 2. Generate CA certificates --
-Write-Host "[2/8] Generating CA certificates..."
+Write-Host "[2/9] Generating CA certificates..."
 pushd $root
 try {
     pushd (Join-Path $root "proxy\mitm")
@@ -93,7 +107,7 @@ try {
 popd
 
 # -- 3. Configure hosts file --
-Write-Host "[3/8] Configuring hosts file..."
+Write-Host "[3/9] Configuring hosts file..."
 $hostsIp = "127.0.0.1"
 Write-Host "  Using: $hostsIp (always localhost — works on any network)"
 
@@ -134,7 +148,7 @@ if ($changed) {
 }
 
 # -- 4. Install Python dependencies --
-Write-Host "[4/8] Installing Python dependencies..."
+Write-Host "[4/9] Installing Python dependencies..."
 $req = Join-Path (Join-Path $root "proxy") "mitm\requirements.txt"
 if (Test-Path $req) {
     try { & $pythonExe -m pip install -r $req -q 2>$null } catch { Write-Host "  (pip warning - dependencies may already be installed)" }
@@ -142,14 +156,14 @@ if (Test-Path $req) {
 }
 
 # -- 5. Build the launcher --
-Write-Host "[5/8] Building Deepchart.exe launcher..."
+Write-Host "[5/9] Building Deepchart.exe launcher..."
 $buildScript = Join-Path $scriptRoot "build_launcher.ps1"
 if (Test-Path $buildScript) {
     & $buildScript -OutputDir $root
 }
 
 # -- 6. Copy templates --
-Write-Host "[6/8] Copying templates and settings..."
+Write-Host "[6/9] Copying templates and settings..."
 $tempsDir = Join-Path $root "userdata"
 $targetDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Deepchart"
 if (Test-Path $tempsDir) {
@@ -171,7 +185,7 @@ if (Test-Path $tempsDir) {
 }
 
 # -- 7. Create scheduled task --
-Write-Host "[7/8] Creating scheduled task 'DeepChartsProxy'..."
+Write-Host "[7/9] Creating scheduled task 'DeepChartsProxy'..."
 $taskName = "DeepChartsProxy"
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing) {
@@ -190,7 +204,7 @@ if ($existing) {
 }
 
 # -- 8. Add Windows Defender exclusions --
-Write-Host "[8/8] Adding Windows Defender exclusions..."
+Write-Host "[8/9] Adding Windows Defender exclusions..."
 $paths = @($root, (Join-Path $root "app"))
 foreach ($p in $paths) {
     if (Test-Path $p) {

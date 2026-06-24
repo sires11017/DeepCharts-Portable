@@ -45,6 +45,9 @@ class DeepChartsLauncher
 
     static void Run()
     {
+        // Kill any existing Deepchart processes (clean slate)
+        KillExistingProcesses();
+
         // Ensure proxy ports are up
         if (!CheckPort(443) || !CheckPort(12010))
         {
@@ -93,6 +96,21 @@ class DeepChartsLauncher
         core.WaitForExit();
     }
 
+    static void KillExistingProcesses()
+    {
+        // Kill existing Deepchart.Core processes
+        foreach (Process p in Process.GetProcessesByName("Deepchart.Core"))
+        {
+            try { p.Kill(); } catch { }
+        }
+        // Kill existing VolumetricaBridge processes
+        foreach (Process p in Process.GetProcessesByName("VolumetricaBridge"))
+        {
+            try { p.Kill(); } catch { }
+        }
+        Thread.Sleep(1000);
+    }
+
     static string FindPython()
     {
         // 1. Check saved config
@@ -117,7 +135,6 @@ class DeepChartsLauncher
                 p.WaitForExit();
                 if (output.Contains("Python 3"))
                 {
-                    // Get full path
                     ProcessStartInfo psi2 = new ProcessStartInfo("where", cmd);
                     psi2.RedirectStandardOutput = true;
                     psi2.UseShellExecute = false;
@@ -125,29 +142,77 @@ class DeepChartsLauncher
                     Process p2 = Process.Start(psi2);
                     string path = p2.StandardOutput.ReadToEnd().Trim();
                     p2.WaitForExit();
-                    if (path.Length > 0) return path.Split('\n')[0].Trim();
+                    if (path.Length > 0)
+                    {
+                        string first = path.Split('\n')[0].Trim();
+                        if (File.Exists(first)) return first;
+                    }
                 }
             }
             catch { }
         }
 
-        // 3. Search common locations
-        string[] searchPaths = new[] {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python"),
-            @"C:\Python3",
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) + @"\Python3",
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) + @"\Python3"
-        };
-
-        foreach (string baseP in searchPaths)
+        // 3. Try py launcher
+        try
         {
-            if (Directory.Exists(baseP))
+            ProcessStartInfo psi = new ProcessStartInfo("py", "-3 --version");
+            psi.RedirectStandardOutput = true;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            Process p = Process.Start(psi);
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            if (output.Contains("Python 3"))
             {
-                foreach (string dir in Directory.GetDirectories(baseP, "Python3*"))
+                ProcessStartInfo psi2 = new ProcessStartInfo("where", "py");
+                psi2.RedirectStandardOutput = true;
+                psi2.UseShellExecute = false;
+                psi2.CreateNoWindow = true;
+                Process p2 = Process.Start(psi2);
+                string path = p2.StandardOutput.ReadToEnd().Trim();
+                p2.WaitForExit();
+                if (path.Length > 0)
                 {
-                    string exe = Path.Combine(dir, "python.exe");
-                    if (File.Exists(exe)) return exe;
+                    string first = path.Split('\n')[0].Trim();
+                    if (File.Exists(first)) return first;
                 }
+            }
+        }
+        catch { }
+
+        // 4. Search common locations
+        string[] searchPatterns = new[] {
+            @"C:\Python3*\python.exe",
+            @"C:\Python3*\python3.exe",
+        };
+        foreach (string pattern in searchPatterns)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(pattern);
+                string file = Path.GetFileName(pattern);
+                if (Directory.Exists(dir))
+                {
+                    foreach (string d in Directory.GetDirectories(dir, "Python3*"))
+                    {
+                        string exe = Path.Combine(d, "python.exe");
+                        if (File.Exists(exe)) return exe;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // 5. Check AppData
+        string appDataPython = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Programs", "Python");
+        if (Directory.Exists(appDataPython))
+        {
+            foreach (string d in Directory.GetDirectories(appDataPython, "Python3*"))
+            {
+                string exe = Path.Combine(d, "python.exe");
+                if (File.Exists(exe)) return exe;
             }
         }
 
