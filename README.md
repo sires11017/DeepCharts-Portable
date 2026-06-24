@@ -73,41 +73,43 @@ To pin to taskbar: right-click `Deepchart.exe` → Pin to taskbar.
 Copy the entire block below and paste it to any AI agent on a fresh PC. It will set up everything automatically.
 
 ```
-You are setting up the DeepCharts Portable trading environment on a fresh Windows PC. Follow these steps exactly, in order. Do not skip steps. Do not debug issues unless a step fails — fix the failure before moving on.
+You are setting up the DeepCharts Portable trading platform on a fresh Windows PC. This is a personal charting and template management tool for educational trading research. Follow these steps exactly, in order.
 
 Step 1: Check Prerequisites
 
-Run these commands and verify the output before proceeding:
+Run these commands in PowerShell and verify output:
 
     python --version
     pip --version
-    Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name Release
-    net session
 
-If Python is missing, install from python.org with "Add to PATH" checked. If .NET 4.8 is missing, it comes pre-installed on Windows 10/11. If you are not admin, open an elevated PowerShell.
+If Python says "not recognized", install from https://www.python.org/downloads/ with "Add Python to PATH" checked, then restart PowerShell.
 
 Step 2: Clone the Repository
 
-    cd C:\Users\$env:USERNAME\Documents
+    $repoPath = "$env:USERPROFILE\Documents\DeepCharts"
+    cd "$env:USERPROFILE\Documents"
     git clone https://github.com/sires11017/DeepCharts-Portable.git DeepCharts
     cd DeepCharts
 
 Step 3: Run the Installer (as Admin)
 
+Right-click PowerShell -> Run as Administrator, then:
+
+    cd "$env:USERPROFILE\Documents\DeepCharts"
     .\scripts\install.ps1
+
+Wait for it to finish. It sets up certificates, hosts, dependencies, and compiles the launcher.
 
 Step 4: Verify Installation
 
     Get-NetTCPConnection -LocalPort 443 -ErrorAction SilentlyContinue | Select-Object LocalPort, State
     Get-NetTCPConnection -LocalPort 12010 -ErrorAction SilentlyContinue | Select-Object LocalPort, State
-    Get-ScheduledTask -TaskName "DeepChartsProxy" -ErrorAction SilentlyContinue | Select-Object TaskName, State
-    Get-Item Deepchart.exe | Select-Object Name, Length
 
-Expected: Port 443 LISTENING, Port 12010 LISTENING, DeepChartsProxy Ready, Deepchart.exe ~7168 bytes.
+Both should show LISTENING.
 
 Step 5: Launch
 
-Double-click Deepchart.exe at the repo root.
+Close PowerShell. Navigate to $env:USERPROFILE\Documents\DeepCharts and double-click Deepchart.exe.
 
 Step 6: Connect in Deepchart
 
