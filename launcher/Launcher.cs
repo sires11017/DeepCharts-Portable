@@ -61,14 +61,16 @@ class DeepChartsLauncher
             }
         }
 
-        // Start VolumetricaBridge
+        // Start VolumetricaBridge (via wrapper that suppresses .NET error dialogs)
         Process bridge = null;
         string bridgeDir = Path.Combine(BaseDir, "app", "bridge");
         string bridgeExe = Path.Combine(bridgeDir, "VolumetricaBridge.exe");
+        string wrapperExe = Path.Combine(BaseDir, "app", "BridgeWrapper.exe");
         if (File.Exists(bridgeExe))
         {
             bridge = new Process();
-            bridge.StartInfo.FileName = bridgeExe;
+            // Use wrapper if available (suppresses mscorlib.XmlSerializers error dialog)
+            bridge.StartInfo.FileName = File.Exists(wrapperExe) ? wrapperExe : bridgeExe;
             bridge.StartInfo.WorkingDirectory = bridgeDir;
             bridge.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
             bridge.StartInfo.CreateNoWindow = true;

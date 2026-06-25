@@ -113,9 +113,11 @@ for ($i = 0; $i -lt $maxWait; $i++) {
 
 # ── 5. Start bridge ──
 $bridgeExe = Join-Path $REPO "app\bridge\VolumetricaBridge.exe"
+$wrapperExe = Join-Path $REPO "app\BridgeWrapper.exe"
 $bridgeDir = Join-Path $REPO "app\bridge"
 if (Test-Path $bridgeExe) {
-    Start-Process -FilePath $cmdExe -ArgumentList "/c", "start", "/min", "`"$bridgeExe`"" -WorkingDirectory $bridgeDir
+    $exeToRun = if (Test-Path $wrapperExe) { $wrapperExe } else { $bridgeExe }
+    Start-Process -FilePath $cmdExe -ArgumentList "/c", "start", "/min", "`"$exeToRun`"" -WorkingDirectory $bridgeDir
     Start-Sleep -Seconds 2
 }
 
