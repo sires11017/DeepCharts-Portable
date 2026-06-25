@@ -5,15 +5,17 @@
 .DESCRIPTION
     - Verifies prerequisites (Python, .NET 4.8)
     - Generates CA certificates
-    - Configures hosts file entries
+    - Configures hosts file entries (127.0.0.1)
     - Installs Python dependencies
-    - Creates Windows scheduled task for proxy service
     - Compiles the Deepchart.exe launcher from C# source
     - Copies templates and settings to user Documents
+    - Fixes .NET XML serializer (eliminates "system file not specified" error)
+    - Installs auto-start on boot via Windows Startup folder
     - Adds Windows Defender exclusions
 .NOTES
     Run: Right-click -> Run with PowerShell (Admin)
-    Run once after every git pull that changes infrastructure.
+    Run once after git pull or on a fresh machine.
+    After install, DeepCharts auto-starts on every login.
 #>
 
 #Requires -RunAsAdministrator

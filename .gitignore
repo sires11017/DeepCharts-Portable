@@ -1,15 +1,53 @@
+# === Logs ===
 logs/
 *.log
+userdata/DPC_Log_*.log
+
+# === Environment / Secrets ===
 .env
 config_local.py
-*.zip
+.python_path
+
+# === Generated certificates (per-machine) ===
+certs/mitm_ca/*.pem
+certs/mitm_ca/*.key
+certs/mitm_ca/cert.pem
+certs/mitm_ca/key.pem
+certs/mitm_ca/ca.pem
+certs/mitm_ca/ca.key
+
+# === Personal trading data ===
+userdata/Trading Account/
+userdata/Hist Fills/
+userdata/Screenshots/
+userdata/Import/
+
+# === Binary artifacts ===
+*.pk12
+*.lic
+app/bridge/testwrite.*
+app/bridge/*.exe.bak-*
+app/SlimDX.dll.bak
+
+# === Python ===
 __pycache__/
 *.pyc
+*.pyo
+
+# === Visual Studio ===
 .vs/
 *.user
 *.suo
-archive/
-.python_path
+*.ncb
+*.sdf
+
+# === OS ===
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# === Misc ===
+*.zip
 *.tmp
 *.bak
-Thumbs.db
+archive/
