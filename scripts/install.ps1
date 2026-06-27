@@ -129,7 +129,16 @@ $hostnames = @(
     "data-b.historical.deepcharts.com"
 )
 $hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
-$hostsContent = Get-Content $hostsPath -Encoding ASCII -ErrorAction SilentlyContinue
+
+try {
+    $hostsContent = Get-Content $hostsPath -Encoding ASCII -ErrorAction Stop
+} catch {
+    Write-Host "[!] Cannot read hosts file: $($_.Exception.Message)"
+    Write-Host "    Add these entries manually to $hostsPath :"
+    $hostnames | ForEach-Object { Write-Host "    $hostsIp $_" }
+    $hostsContent = @()
+}
+
 if (-not $hostsContent) { $hostsContent = @() }
 $changed = $false
 
@@ -152,9 +161,14 @@ foreach ($hostname in $hostnames) {
     }
 }
 if ($changed) {
-    $hostsContent | Out-File $hostsPath -Encoding ascii -Force
-    ipconfig /flushdns | Out-Null
-    Write-Host "  DNS cache flushed"
+    try {
+        $hostsContent | Out-File $hostsPath -Encoding ascii -Force -ErrorAction Stop
+        ipconfig /flushdns | Out-Null
+        Write-Host "  DNS cache flushed"
+    } catch {
+        Write-Host "  [!] Failed to write hosts file: $($_.Exception.Message)"
+        Write-Host "      Add entries manually to $hostsPath"
+    }
 }
 
 # -- 4. Install Python dependencies --
@@ -172,19 +186,49 @@ if (Test-Path $buildScript) {
     & $buildScript -OutputDir $root
 }
 
-$wrapperSrc = Join-Path $root "launcher\BridgeWrapper.cs"
-$wrapperOut = Join-Path $root "app\BridgeWrapper.exe"
-if (Test-Path $wrapperSrc) {
-    $cscPaths = @(
-        "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
-        "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
-    )
-    $csc = $null
-    foreach ($p in $cscPaths) { if (Test-Path $p) { $csc = $p; break } }
-    if ($csc) {
+$cscPaths = @(
+    "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+    "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+)
+$csc = $null
+foreach ($p in $cscPaths) { if (Test-Path $p) { $csc = $p; break } }
+
+if ($csc) {
+    $wrapperSrc = Join-Path $root "launcher\BridgeWrapper.cs"
+    $wrapperOut = Join-Path $root "app\BridgeWrapper.exe"
+    if (Test-Path $wrapperSrc) {
         & $csc /out:$wrapperOut /target:exe /nologo /optimize /platform:x64 $wrapperSrc 2>&1 | Out-Null
         if (Test-Path $wrapperOut) { Write-Host "[+] BridgeWrapper.exe built" }
+        else { Write-Host "  (BridgeWrapper build failed)" }
     }
+
+    # Try to generate mscorlib.XmlSerializers.dll if sgen.exe is available
+    $bridgeExe = Join-Path $root "app\bridge\VolumetricaBridge.exe"
+    $serializerDll = Join-Path $root "app\bridge\mscorlib.XmlSerializers.dll"
+    $sgenPaths = @(
+        "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\sgen.exe",
+        "C:\Windows\Microsoft.NET\Framework\v4.0.30319\sgen.exe"
+    )
+    $sgen = $null
+    foreach ($p in $sgenPaths) { if (Test-Path $p) { $sgen = $p; break } }
+
+    if ($sgen -and (Test-Path $bridgeExe) -and -not (Test-Path $serializerDll)) {
+        Write-Host "  Generating XmlSerializers DLL..."
+        try {
+            & $sgen /a:$bridgeExe /f 2>&1 | Out-Null
+            if (Test-Path $serializerDll) {
+                Write-Host "[+] mscorlib.XmlSerializers.dll generated"
+            } else {
+                Write-Host "  (sgen did not produce output - dialog dismissal is primary defense)"
+            }
+        } catch {
+            Write-Host "  (sgen failed - dialog dismissal is primary defense)"
+        }
+    } elseif (-not $sgen) {
+        Write-Host "  (sgen.exe not found - dialog dismissal will handle missing serializer DLL)"
+    }
+} else {
+    Write-Host "  [!] C# compiler (csc.exe) not found"
 }
 
 # -- 6. Copy templates --

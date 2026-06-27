@@ -2,12 +2,29 @@ param(
     [switch]$Background
 )
 
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Stop"
 $REPO = Split-Path -Parent $PSScriptRoot
 
 function Write-Log($msg) { if (-not $Background) { Write-Host $msg } }
+function Write-Err($msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
-# ── 1. Ensure hosts file has CQG entries ──
+# -- 0. Kill old processes --
+Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process VolumetricaBridge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process BridgeWrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
+# -- 1. Find Python --
+. "$PSScriptRoot\find-python.ps1"
+$python = $script:PythonExe
+if (-not $python) {
+    Write-Err "Python not found. Install Python 3 and run install.ps1."
+    exit 1
+}
+Write-Log "[+] Python: $python"
+
+# -- 2. Ensure hosts file has CQG entries --
 $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
 $hostsEntries = @(
     "127.0.0.1 demoapi.cqg.com",
@@ -15,7 +32,15 @@ $hostsEntries = @(
     "127.0.0.1 depth-it.historical.deepcharts.com",
     "127.0.0.1 data-b.historical.deepcharts.com"
 )
-$hostsContent = Get-Content $hostsFile -Raw -ErrorAction SilentlyContinue
+
+try {
+    $hostsContent = Get-Content $hostsFile -Raw -ErrorAction Stop
+} catch {
+    Write-Err "Cannot read hosts file: $($_.Exception.Message)"
+    Write-Err "Run this script as Administrator or fix hosts file permissions."
+    exit 1
+}
+
 $needsUpdate = $false
 foreach ($entry in $hostsEntries) {
     $domain = ($entry -split "\s+")[1]
@@ -45,54 +70,34 @@ if ($needsUpdate) {
     $lines += ""
     $lines += "# DeepCharts CQG proxy entries"
     $lines += $hostsEntries
-    Set-Content -Path $hostsFile -Value ($lines -join "`r`n") -Force
-}
-
-# ── 2. Kill old processes ──
-Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
-Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Get-Process VolumetricaBridge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Get-Process BridgeWrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-
-# ── 3. Find Python ──
-$python = $null
-$pyPathFile = Join-Path $REPO ".python_path"
-if (Test-Path $pyPathFile) {
-    $saved = Get-Content $pyPathFile -Raw | ForEach-Object { $_.Trim() }
-    if ($saved -and (Test-Path $saved)) { $python = $saved }
-}
-if (-not $python) {
-    foreach ($cmd in @("python", "python3", "py")) {
-        $found = Get-Command $cmd -ErrorAction SilentlyContinue
-        if ($found) { $python = $found.Source; break }
+    try {
+        $lines -join "`r`n" | Set-Content -Path $hostsFile -Force -ErrorAction Stop
+        Write-Log "[+] Hosts file updated"
+    } catch {
+        Write-Err "Failed to update hosts file: $($_.Exception.Message)"
+        Write-Err "Run as Administrator or add these entries manually to $hostsFile :"
+        $hostsEntries | ForEach-Object { Write-Err "  $_" }
+        exit 1
     }
 }
-if (-not $python) {
-    $locations = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
-        "C:\Python3*\python.exe"
-    )
-    foreach ($loc in $locations) {
-        $match = Get-Item $loc -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($match) { $python = $match.FullName; break }
-    }
-}
-if (-not $python) {
-    Write-Log "ERROR: Python not found"
-    exit 1
-}
 
-# ── 4. Start proxies ──
+# -- 3. Start proxies --
 $proxyMitmDir = Join-Path $REPO "proxy\mitm"
 $histScript = Join-Path $proxyMitmDir "vol_hist_server.py"
 $bridgeProxy = Join-Path $proxyMitmDir "bridge_mitm_proxy.py"
 
-$histProc = Start-Process -FilePath $python -ArgumentList "`"$histScript`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru
-Start-Sleep -Seconds 2
-$proxyProc = Start-Process -FilePath $python -ArgumentList "`"$bridgeProxy`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru
+if (-not (Test-Path $histScript) -or -not (Test-Path $bridgeProxy)) {
+    Write-Err "Proxy scripts not found at $proxyMitmDir"
+    exit 1
+}
 
-# ── 5. Verify proxies started and wait for ports ──
+$histProc = Start-Process -FilePath $python -ArgumentList "`"$histScript`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+Write-Log "[+] vol_hist_server started (PID $($histProc.Id))"
+Start-Sleep -Seconds 2
+$proxyProc = Start-Process -FilePath $python -ArgumentList "`"$bridgeProxy`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+Write-Log "[+] bridge_mitm_proxy started (PID $($proxyProc.Id))"
+
+# -- 4. Verify proxies started and wait for ports --
 $proxyReady = $false
 $maxWait = 30
 for ($i = 0; $i -lt $maxWait; $i++) {
@@ -103,40 +108,47 @@ for ($i = 0; $i -lt $maxWait; $i++) {
         $proxyReady = $true
         break
     }
-    # Check if processes died
-    if ($histProc -and $histProc.HasExited) {
-        Write-Log "ERROR: vol_hist_server exited (code $($histProc.ExitCode))"
+    if ($histProc.HasExited) {
+        Write-Err "vol_hist_server exited unexpectedly (exit code: $($histProc.ExitCode))"
         break
     }
-    if ($proxyProc -and $proxyProc.HasExited) {
-        Write-Log "ERROR: bridge_mitm_proxy exited (code $($proxyProc.ExitCode))"
+    if ($proxyProc.HasExited) {
+        Write-Err "bridge_mitm_proxy exited unexpectedly (exit code: $($proxyProc.ExitCode))"
         break
     }
 }
 
 if (-not $proxyReady) {
-    Write-Log "WARNING: Proxy ports not ready after ${maxWait}s."
+    Write-Err "Proxy ports not ready after ${maxWait}s. Check logs/ for errors."
+    exit 1
 }
+Write-Log "[+] Proxy ports verified (443, 12010)"
 
-# ── 6. Start bridge via wrapper ──
+# -- 5. Start bridge via wrapper --
 $bridgeExe = Join-Path $REPO "app\bridge\VolumetricaBridge.exe"
 $wrapperExe = Join-Path $REPO "app\BridgeWrapper.exe"
 $bridgeDir = Join-Path $REPO "app\bridge"
+
 if (Test-Path $bridgeExe) {
     if (Test-Path $wrapperExe) {
         Start-Process -FilePath $wrapperExe -ArgumentList "--wait" -WorkingDirectory $bridgeDir -WindowStyle Hidden
+        Write-Log "[+] Bridge started via wrapper"
     } else {
         Start-Process -FilePath $bridgeExe -WorkingDirectory $bridgeDir -WindowStyle Hidden
+        Write-Log "[+] Bridge started directly"
     }
     Start-Sleep -Seconds 2
+} else {
+    Write-Err "VolumetricaBridge.exe not found at $bridgeExe"
 }
 
-# ── 7. Start Deepchart ──
+# -- 6. Start Deepchart --
 $coreExe = Join-Path $REPO "app\Deepchart.Core.exe"
 if (Test-Path $coreExe) {
     Start-Process -FilePath $coreExe -WorkingDirectory $REPO
+    Write-Log "[+] Deepchart.Core started"
 } else {
-    Write-Log "ERROR: Deepchart.Core.exe not found at $coreExe"
+    Write-Err "Deepchart.Core.exe not found at $coreExe"
 }
 
 if (-not $Background) {

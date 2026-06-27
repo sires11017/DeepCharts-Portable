@@ -11,10 +11,20 @@ Write-Host ""
 
 # 1. Python
 Write-Host "=== PYTHON ==="
-$pyVer = try { python --version 2>&1 } catch { "NOT FOUND" }
-$pyVer3 = try { python3 --version 2>&1 } catch { "NOT FOUND" }
-Write-Host "  python: $pyVer"
-Write-Host "  python3: $pyVer3"
+. "$PSScriptRoot\find-python.ps1"
+$pyExe = $script:PythonExe
+if ($pyExe) {
+    Write-Host "  Detected: $pyExe"
+    if (Test-Path $pyExe) {
+        $v = & $pyExe --version 2>&1
+        Write-Host "  Version: $v"
+        Write-Host "  EXISTS: YES"
+    } else {
+        Write-Host "  EXISTS: NO (path invalid)"
+    }
+} else {
+    Write-Host "  Python: NOT FOUND"
+}
 $configPath = Join-Path $root ".python_path"
 if (Test-Path $configPath) {
     $saved = (Get-Content $configPath -Raw).Trim()
@@ -30,11 +40,15 @@ $port12010 = Get-NetTCPConnection -LocalPort 12010 -ErrorAction SilentlyContinue
 if ($port443) {
     $p443 = $port443 | Select-Object -First 1
     Write-Host "  443: LISTENING (PID $($p443.OwningProcess))"
+    $procName = (Get-Process -Id $p443.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+    Write-Host "       Process: $procName"
     Write-Host "       State: $($p443.State)"
 } else { Write-Host "  443: NOT LISTENING" }
 if ($port12010) {
     $p12010 = $port12010 | Select-Object -First 1
     Write-Host "  12010: LISTENING (PID $($p12010.OwningProcess))"
+    $procName = (Get-Process -Id $p12010.OwningProcess -ErrorAction SilentlyContinue).ProcessName
+    Write-Host "         Process: $procName"
     Write-Host "         State: $($p12010.State)"
 } else { Write-Host "  12010: NOT LISTENING" }
 Write-Host ""
@@ -79,6 +93,7 @@ Write-Host "=== INSTALLED FILES ==="
 $checks = @(
     "Deepchart.exe",
     "app\Deepchart.Core.exe",
+    "app\BridgeWrapper.exe",
     "app\bridge\VolumetricaBridge.exe",
     "proxy\mitm\bridge_mitm_proxy.py",
     "proxy\mitm\vol_hist_server.py",
@@ -92,7 +107,16 @@ foreach ($f in $checks) {
 }
 Write-Host ""
 
-# 8. Latest proxy logs
+# 8. Wrapper log
+Write-Host "=== BRIDGE WRAPPER LOG ==="
+$wrapperLog = Join-Path ([Environment]::GetFolderPath("ApplicationData")) "DeepCharts\bridge_wrapper.log"
+if (Test-Path $wrapperLog) {
+    Write-Host "  Last 20 lines:"
+    Get-Content $wrapperLog -Tail 20 | ForEach-Object { Write-Host "    $_" }
+} else { Write-Host "  No wrapper log found" }
+Write-Host ""
+
+# 9. Latest proxy logs
 Write-Host "=== LATEST PROXY LOGS ==="
 $logDir = Join-Path $root "logs"
 if (Test-Path $logDir) {
@@ -113,6 +137,15 @@ if (Test-Path $logDir) {
         Get-Content $histLogs.FullName -Tail 20 | ForEach-Object { Write-Host "    $_" }
     } else { Write-Host "  No vol_hist logs found" }
 } else { Write-Host "  logs/ directory not found" }
+
+# 10. Launcher log
+Write-Host ""
+Write-Host "=== LAUNCHER LOG ==="
+$launcherLog = Join-Path $root "logs\launcher.log"
+if (Test-Path $launcherLog) {
+    Write-Host "  Last 20 lines:"
+    Get-Content $launcherLog -Tail 20 | ForEach-Object { Write-Host "    $_" }
+} else { Write-Host "  No launcher log found" }
 Write-Host ""
 Write-Host "============================================"
 Write-Host "  Copy ALL output above and send it."

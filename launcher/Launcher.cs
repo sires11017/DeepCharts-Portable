@@ -9,16 +9,26 @@ using System.Windows.Forms;
 class DeepChartsLauncher
 {
     static string BaseDir;
+    static string LogPath;
+    static StreamWriter LogWriter;
 
     [STAThread]
     static void Main()
     {
         BaseDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-        string coreExe = Path.Combine(BaseDir, "app", "Deepchart.Core.exe");
+        LogPath = Path.Combine(BaseDir, "logs", "launcher.log");
 
+        try { Directory.CreateDirectory(Path.GetDirectoryName(LogPath)); } catch { }
+        try { LogWriter = new StreamWriter(LogPath, false) { AutoFlush = true }; } catch { }
+
+        Log("=== Launcher starting ===");
+        Log("Base dir: " + BaseDir);
+
+        string coreExe = Path.Combine(BaseDir, "app", "Deepchart.Core.exe");
         if (!File.Exists(coreExe))
         {
             Fail("Deepchart.Core.exe not found in " + BaseDir);
+            Log("FATAL: Deepchart.Core.exe not found");
             return;
         }
 
@@ -29,7 +39,8 @@ class DeepChartsLauncher
             mtx = new Mutex(true, "DeepChartsLauncher", out firstCreated);
             if (!firstCreated)
             {
-                BringExistingToFront();
+                Log("Another instance already running");
+                Fail("DeepCharts is already running.");
                 return;
             }
             Run();
@@ -37,7 +48,14 @@ class DeepChartsLauncher
         finally
         {
             if (mtx != null) mtx.Close();
+            if (LogWriter != null) { LogWriter.Close(); LogWriter = null; }
         }
+    }
+
+    static void Log(string msg)
+    {
+        if (LogWriter == null) return;
+        try { LogWriter.WriteLine(DateTime.Now.ToString("HH:mm:ss") + " " + msg); } catch { }
     }
 
     static void Run()
@@ -49,19 +67,27 @@ class DeepChartsLauncher
 
     static bool EnsureProxies()
     {
-        if (AreProxiesUp()) return true;
+        if (AreProxiesUp())
+        {
+            Log("Proxies already running");
+            return true;
+        }
 
         if (!StartProxies())
         {
+            Log("Failed to start proxies");
             Fail("Could not start proxy services.\nMake sure Python 3 is installed and run install.ps1 as Admin first.");
             return false;
         }
 
         if (!WaitForProxiesReady(30))
         {
+            Log("Proxies failed to become ready within 30s");
             Fail("Proxy ports (443, 12010) did not become available.\nCheck logs/ folder for errors.");
             return false;
         }
+
+        Log("Proxies ready");
         return true;
     }
 
@@ -98,7 +124,11 @@ class DeepChartsLauncher
         if (File.Exists(configPath))
         {
             string saved = File.ReadAllText(configPath).Trim();
-            if (saved.Length > 0 && File.Exists(saved)) return saved;
+            if (saved.Length > 0 && File.Exists(saved))
+            {
+                Log("Python (config): " + saved);
+                return saved;
+            }
         }
 
         foreach (string cmd in new[] { "python", "python3" })
@@ -115,7 +145,11 @@ class DeepChartsLauncher
                 if (p.ExitCode == 0 && output.Length > 0)
                 {
                     string path = output.Split('\n')[0].Trim();
-                    if (File.Exists(path)) return path;
+                    if (File.Exists(path))
+                    {
+                        Log("Python (where " + cmd + "): " + path);
+                        return path;
+                    }
                 }
             }
             catch { }
@@ -130,7 +164,11 @@ class DeepChartsLauncher
             Process p = Process.Start(psi);
             string output = p.StandardOutput.ReadToEnd().Trim();
             p.WaitForExit();
-            if (output.Length > 0 && File.Exists(output)) return output;
+            if (output.Length > 0 && File.Exists(output))
+            {
+                Log("Python (py -3): " + output);
+                return output;
+            }
         }
         catch { }
 
@@ -148,7 +186,11 @@ class DeepChartsLauncher
                     foreach (string d in Directory.GetDirectories(dir, "Python3*"))
                     {
                         string exe = Path.Combine(d, "python.exe");
-                        if (File.Exists(exe)) return exe;
+                        if (File.Exists(exe))
+                        {
+                            Log("Python (wildcard): " + exe);
+                            return exe;
+                        }
                     }
                 }
             }
@@ -163,10 +205,15 @@ class DeepChartsLauncher
             foreach (string d in Directory.GetDirectories(appDataPython, "Python3*"))
             {
                 string exe = Path.Combine(d, "python.exe");
-                if (File.Exists(exe)) return exe;
+                if (File.Exists(exe))
+                {
+                    Log("Python (AppData): " + exe);
+                    return exe;
+                }
             }
         }
 
+        Log("Python not found");
         return null;
     }
 
@@ -179,14 +226,26 @@ class DeepChartsLauncher
         string histScript = Path.Combine(BaseDir, "proxy", "mitm", "vol_hist_server.py");
         string proxyWorkDir = Path.Combine(BaseDir, "proxy", "mitm");
 
-        if (!File.Exists(proxyScript) || !File.Exists(histScript)) return false;
+        if (!File.Exists(proxyScript) || !File.Exists(histScript))
+        {
+            Log("Proxy scripts not found");
+            return false;
+        }
 
         ProcessStartInfo psiHist = new ProcessStartInfo(python, "\"" + histScript + "\"");
         psiHist.WorkingDirectory = proxyWorkDir;
         psiHist.CreateNoWindow = true;
         psiHist.UseShellExecute = false;
-        try { Process.Start(psiHist); }
-        catch { return false; }
+        try
+        {
+            Process hist = Process.Start(psiHist);
+            Log("vol_hist_server started, PID: " + hist.Id);
+        }
+        catch (Exception ex)
+        {
+            Log("Failed to start vol_hist_server: " + ex.Message);
+            return false;
+        }
 
         Thread.Sleep(2000);
 
@@ -194,8 +253,16 @@ class DeepChartsLauncher
         psiProxy.WorkingDirectory = proxyWorkDir;
         psiProxy.CreateNoWindow = true;
         psiProxy.UseShellExecute = false;
-        try { Process.Start(psiProxy); }
-        catch { return false; }
+        try
+        {
+            Process proxy = Process.Start(psiProxy);
+            Log("bridge_mitm_proxy started, PID: " + proxy.Id);
+        }
+        catch (Exception ex)
+        {
+            Log("Failed to start bridge_mitm_proxy: " + ex.Message);
+            return false;
+        }
 
         return true;
     }
@@ -206,24 +273,37 @@ class DeepChartsLauncher
         string bridgeExe = Path.Combine(bridgeDir, "VolumetricaBridge.exe");
         string wrapperExe = Path.Combine(BaseDir, "app", "BridgeWrapper.exe");
 
-        if (!File.Exists(bridgeExe)) return;
+        if (!File.Exists(bridgeExe))
+        {
+            Log("VolumetricaBridge.exe not found, skipping");
+            return;
+        }
 
         ProcessStartInfo psi = new ProcessStartInfo();
         if (File.Exists(wrapperExe))
         {
             psi.FileName = wrapperExe;
             psi.Arguments = "--wait";
+            Log("Starting bridge via BridgeWrapper");
         }
         else
         {
             psi.FileName = bridgeExe;
+            Log("Starting bridge directly (no wrapper)");
         }
         psi.WorkingDirectory = bridgeDir;
         psi.WindowStyle = ProcessWindowStyle.Hidden;
         psi.CreateNoWindow = true;
         psi.UseShellExecute = false;
-        try { Process.Start(psi); }
-        catch { }
+        try
+        {
+            Process bridge = Process.Start(psi);
+            Log("Bridge started, PID: " + bridge.Id);
+        }
+        catch (Exception ex)
+        {
+            Log("Failed to start bridge: " + ex.Message);
+        }
     }
 
     static void StartCore()
@@ -237,19 +317,14 @@ class DeepChartsLauncher
         try { core = Process.Start(psi); }
         catch (Exception ex)
         {
+            Log("Failed to start core: " + ex.Message);
             Fail("Failed to start Deepchart: " + ex.Message);
             return;
         }
 
+        Log("Core started, PID: " + core.Id);
         core.WaitForExit();
-    }
-
-    static void BringExistingToFront()
-    {
-        foreach (Process p in Process.GetProcessesByName("Deepchart.Core"))
-        {
-            try { p.Refresh(); } catch { }
-        }
+        Log("Core exited, code: " + core.ExitCode);
     }
 
     static void Fail(string msg)

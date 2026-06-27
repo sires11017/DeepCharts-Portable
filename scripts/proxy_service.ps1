@@ -18,62 +18,10 @@ $root = Split-Path -Parent $scriptRoot
 $proxyScript = Join-Path (Join-Path $root "proxy") "mitm\bridge_mitm_proxy.py"
 $histScript   = Join-Path (Join-Path $root "proxy") "mitm\vol_hist_server.py"
 
-# Find Python - try every possible method
-function Find-Python {
-    # 1. Environment variable
-    if ($env:PYTHON_EXE -and (Test-Path $env:PYTHON_EXE -ErrorAction SilentlyContinue)) {
-        return $env:PYTHON_EXE
-    }
+# Use shared Python detection
+. "$scriptRoot\find-python.ps1"
+$pythonExe = $script:PythonExe
 
-    # 2. Saved config from installer
-    $configFile = Join-Path $root ".python_path"
-    if (Test-Path $configFile) {
-        $saved = (Get-Content $configFile -Raw).Trim()
-        if ($saved -and (Test-Path $saved -ErrorAction SilentlyContinue)) {
-            return $saved
-        }
-    }
-
-    # 3. Try commands in PATH
-    foreach ($cmd in @("python", "python3")) {
-        try {
-            $info = Get-Command $cmd -ErrorAction SilentlyContinue
-            if ($info -and $info.Source -and (Test-Path $info.Source)) {
-                return $info.Source
-            }
-        } catch {}
-    }
-
-    # 4. Try py launcher
-    try {
-        $pyPath = (Get-Command "py" -ErrorAction SilentlyContinue).Source
-        if ($pyPath) {
-            $test = & $pyPath -3 --version 2>&1
-            if ($test -match "Python 3") {
-                return $pyPath
-            }
-        }
-    } catch {}
-
-    # 5. Search common install locations (wildcards)
-    $searchPatterns = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
-        "C:\Python3*\python.exe",
-        "$env:ProgramFiles\Python3*\python.exe",
-        "$env:ProgramFiles(x86)\Python3*\python.exe"
-    )
-    foreach ($pattern in $searchPatterns) {
-        $found = Resolve-Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) {
-            return $found.Path
-        }
-    }
-
-    # 6. Last resort - just return "python" and hope PATH works
-    return "python"
-}
-
-$pythonExe = Find-Python
 $proxyPort = 443
 $histPort  = 12010
 
@@ -98,11 +46,11 @@ function Get-ProcessByPort($port) {
 function Start-HiddenPython($scriptPath, $port) {
     $existing = Get-ProcessByPort -port $port
     if ($existing) {
-        Write-Host "[proxy] Port $port already bound by PID $($existing.Id), assuming running"
+        Write-Host "[proxy] Port $port already bound by PID $($existing.Id) ($($existing.ProcessName)), assuming running"
         return $existing
     }
     try {
-        $proc = Start-Process -FilePath $pythonExe -ArgumentList "`"$scriptPath`"" -PassThru
+        $proc = Start-Process -FilePath $pythonExe -ArgumentList "`"$scriptPath`"" -WindowStyle Hidden -PassThru
         Write-Host "[proxy] Started $scriptPath (PID $($proc.Id))"
         return $proc
     } catch {
