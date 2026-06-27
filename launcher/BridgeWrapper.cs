@@ -195,12 +195,8 @@ class BridgeWrapper {
     }
 
     static void MonitorGlobalDialogs(int bridgePid) {
-        // Monitor ALL visible dialogs and dismiss any that look like error dialogs
-        // This catches dialogs that appear in child processes or orphaned windows
         int dismissed = 0;
-        int bridgeProcessId = bridgePid;
 
-        // Wait a bit for dialogs to appear
         Thread.Sleep(500);
 
         while (true) {
@@ -209,28 +205,11 @@ class BridgeWrapper {
                 EnumWindows((hWnd, _) => {
                     if (!IsWindowVisible(hWnd)) return true;
 
-                    uint pid;
-                    GetWindowThreadProcessId(hWnd, out pid);
-
-                    // Only monitor windows from the bridge process tree
-                    // (bridge spawns child processes)
-                    if (pid != (uint)bridgeProcessId) {
-                        // Check if it's a child of the bridge
-                        try {
-                            Process proc = Process.GetProcessById((int)pid);
-                            if (proc == null) return true;
-                            // Check if parent is bridge
-                            // (This is best-effort, we can't always get parent PID easily)
-                        } catch { return true; }
-                    }
-
                     StringBuilder className = new StringBuilder(256);
                     GetClassName(hWnd, className, 256);
                     string cn = className.ToString();
                     if (cn != "#32770") return true;
 
-                    // Check if this looks like a .NET error dialog
-                    // (class #32770 with no other identifying features)
                     if (DismissDialog(hWnd)) {
                         dismissed++;
                     }
@@ -239,12 +218,11 @@ class BridgeWrapper {
                 }, IntPtr.Zero);
             } catch { }
 
-            // Stop if bridge has been gone for a while
             try {
-                Process proc = Process.GetProcessById(bridgeProcessId);
+                Process proc = Process.GetProcessById(bridgePid);
                 if (proc == null) break;
                 if (proc.HasExited) {
-                    Thread.Sleep(1000); // Give time for final dialogs
+                    Thread.Sleep(1000);
                     break;
                 }
             } catch {
