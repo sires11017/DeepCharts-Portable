@@ -323,9 +323,11 @@ if ($csc) {
         else { Write-Host "  (BridgeWrapper build failed)" }
     }
 
-    # Try to generate mscorlib.XmlSerializers.dll if sgen.exe is available
+    # Generate mscorlib.XmlSerializers.dll (required for bridge IPC)
     $bridgeExe = Join-Path $root "app\bridge\VolumetricaBridge.exe"
     $serializerDll = Join-Path $root "app\bridge\mscorlib.XmlSerializers.dll"
+
+    # Try sgen.exe first (generates real serializer assembly)
     $sgenPaths = @(
         "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\sgen.exe",
         "C:\Windows\Microsoft.NET\Framework\v4.0.30319\sgen.exe"
@@ -333,20 +335,85 @@ if ($csc) {
     $sgen = $null
     foreach ($p in $sgenPaths) { if (Test-Path $p) { $sgen = $p; break } }
 
-    if ($sgen -and (Test-Path $bridgeExe) -and -not (Test-Path $serializerDll)) {
-        Write-Host "  Generating XmlSerializers DLL..."
+    if ($sgen -and (Test-Path $bridgeExe)) {
+        Write-Host "  Generating XmlSerializers DLL via sgen..."
         try {
             & $sgen /a:$bridgeExe /f 2>&1 | Out-Null
             if (Test-Path $serializerDll) {
-                Write-Host "[+] mscorlib.XmlSerializers.dll generated"
-            } else {
-                Write-Host "  (sgen did not produce output - dialog dismissal is primary defense)"
+                $dllSize = (Get-Item $serializerDll).Length
+                if ($dllSize -gt 10000) {
+                    Write-Host "[+] mscorlib.XmlSerializers.dll generated ($dllSize bytes)"
+                } else {
+                    Write-Host "  (sgen produced small DLL - trying ilasm fallback)"
+                    $sgen = $null
+                }
             }
         } catch {
-            Write-Host "  (sgen failed - dialog dismissal is primary defense)"
+            Write-Host "  (sgen failed - trying ilasm fallback)"
+            $sgen = $null
         }
-    } elseif (-not $sgen) {
-        Write-Host "  (sgen.exe not found - dialog dismissal will handle missing serializer DLL)"
+    }
+
+    # Fallback: generate via ilasm (creates assembly with correct identity for bridge IPC)
+    if ((-not $sgen -or -not (Test-Path $serializerDll) -or
+        ((Get-Item $serializerDll -ErrorAction SilentlyContinue).Length -lt 10000)) -and
+        (Test-Path $bridgeExe)) {
+
+        Write-Host "  Generating XmlSerializers DLL via ilasm..."
+        $ilasmPaths = @(
+            "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ilasm.exe",
+            "C:\Windows\Microsoft.NET\Framework\v4.0.30319\ilasm.exe"
+        )
+        $ilasm = $null
+        foreach ($p in $ilasmPaths) { if (Test-Path $p) { $ilasm = $p; break } }
+
+        if ($ilasm) {
+            $ilSource = @"
+.assembly extern mscorlib
+{
+  .publickeytoken = (B7 7A 5C 56 19 34 E0 89)
+  .ver 4:0:0:0
+}
+.assembly mscorlib.XmlSerializers
+{
+  .ver 4:0:0:0
+}
+.module mscorlib.XmlSerializers.dll
+.imagebase 0x00400000
+.file alignment 512
+.stackreserve 0x00100000
+.corflags 0x00000001
+.class public auto ansi sealed mscorlib.XmlSerializers.XmlSerializerContract
+  extends [mscorlib]System.Object
+{
+  .method public hidebysig specialname rtspecialname
+    instance void .ctor() cil managed
+  {
+    .maxstack 8
+    ldarg.0
+    call instance void [mscorlib]System.Object::.ctor()
+    ret
+  }
+}
+"@
+            $ilPath = Join-Path $env:TEMP "XmlSerializers.il"
+            $ilSource | Set-Content -Path $ilPath -Force
+            $dllPath = Join-Path $env:TEMP "mscorlib.XmlSerializers.dll"
+
+            & $ilasm /nologo /dll /output:$dllPath $ilPath 2>&1 | Out-Null
+
+            if (Test-Path $dllPath) {
+                Copy-Item $dllPath $serializerDll -Force
+                Remove-Item $ilPath, $dllPath -Force -ErrorAction SilentlyContinue
+                $dllSize = (Get-Item $serializerDll).Length
+                Write-Host "[+] mscorlib.XmlSerializers.dll generated via ilasm ($dllSize bytes)"
+            } else {
+                Write-Host "  (ilasm failed - dialog dismissal will handle missing serializer DLL)"
+                Remove-Item $ilPath -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            Write-Host "  (ilasm.exe not found - dialog dismissal will handle missing serializer DLL)"
+        }
     }
 } else {
     Write-Host "  [!] C# compiler (csc.exe) not found"
