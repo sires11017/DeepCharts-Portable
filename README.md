@@ -9,9 +9,9 @@ A self-contained, portable DeepCharts trading environment with a CQG MITM proxy,
 | Requirement | Check | Install if missing |
 |-------------|-------|--------------------|
 | **Windows 10/11** | `echo %OS%` → `Windows_NT` | N/A |
-| **Python 3.10+** | `python --version` | python.org, check "Add to PATH" |
-| **Git** | `git --version` | git-scm.com |
 | **Admin access** | `net session` | Only needed for one-time install |
+
+Python 3 and Git are **auto-installed** by the installer if missing.
 
 .NET Framework 4.8 is already installed on all Windows 10/11 systems.
 
@@ -26,8 +26,11 @@ cd DeepCharts
 .\scripts\install.ps1
 ```
 
+> **No Python or Git?** Install Git first from [git-scm.com](https://git-scm.com/download/win), then run the 3 commands above. The installer will auto-install Python 3 for you.
+
 What `install.ps1` does (one-time, requires Admin):
-1. Verifies Python 3 and .NET 4.8
+1. Auto-installs Git and Python 3 if missing
+2. Verifies Python 3 and .NET 4.8
 2. Generates CA certificates in `certs/mitm_ca/`
 3. Adds hosts file entries for CQG domains (127.0.0.1)
 4. Installs Python dependencies (cryptography, websockets, protobuf)

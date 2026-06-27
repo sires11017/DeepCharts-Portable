@@ -76,8 +76,65 @@ if ($port12010) {
 
 Write-Host "[+] Cleaned up"
 
-# -- 1. Prerequisites --
+# -- 1. Prerequisites (auto-install if missing) --
 Write-Host "[1/8] Checking prerequisites..."
+
+# -- Check & auto-install Git --
+$gitExe = $null
+try {
+    $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+    if ($gitCmd) { $gitExe = $gitCmd.Source }
+} catch {}
+if (-not $gitExe -or -not (Test-Path $gitExe)) {
+    # Check common install path
+    $gitPaths = @(
+        "$env:ProgramFiles\Git\cmd\git.exe",
+        "$env:ProgramFiles(x86)\Git\cmd\git.exe",
+        "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe"
+    )
+    foreach ($p in $gitPaths) {
+        if (Test-Path $p) { $gitExe = $p; break }
+    }
+}
+
+if (-not $gitExe -or -not (Test-Path $gitExe)) {
+    Write-Host "[!] Git not found. Downloading and installing Git..."
+    $gitUrl = "https://github.com/git-scm/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe"
+    $gitInstaller = "$env:TEMP\GitInstaller.exe"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $gitUrl -OutFile $gitInstaller -UseBasicParsing
+        Write-Host "    Installing Git (silent)..."
+        $gitProcess = Start-Process -FilePath $gitInstaller -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/COMPONENTS=icons,ext\reg\shellhere,assoc,assoc_sh" -Wait -PassThru
+        if ($gitProcess.ExitCode -ne 0) {
+            Write-Host "[!] Git installer returned exit code $($gitProcess.ExitCode)" -ForegroundColor Yellow
+        }
+        # Refresh PATH
+        $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+        Remove-Item $gitInstaller -Force -ErrorAction SilentlyContinue
+        try {
+            $gitCmd = Get-Command git -ErrorAction SilentlyContinue
+            if ($gitCmd) { $gitExe = $gitCmd.Source }
+        } catch {}
+        if (-not $gitExe -or -not (Test-Path $gitExe)) {
+            # Re-check common paths after install
+            foreach ($p in $gitPaths) {
+                if (Test-Path $p) { $gitExe = $p; break }
+            }
+        }
+    } catch {
+        Write-Host "[!] Git download failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+if (-not $gitExe -or -not (Test-Path $gitExe)) {
+    Write-Host "[!] Git is required. Install from https://git-scm.com/download/win" -ForegroundColor Red
+    exit 1
+}
+$gitVersion = & $gitExe --version 2>&1
+Write-Host "[+] Git: $gitVersion"
+
+# -- Check & auto-install Python --
 . "$PSScriptRoot\find-python.ps1"
 $pythonExe = $script:PythonExe
 $pythonFull = $null
@@ -117,9 +174,38 @@ if (-not $pythonExe -or $pythonExe -eq "python") {
 }
 
 if (-not $pythonExe) {
-    Write-Host "[!] Python 3 not found."
-    Write-Host "    Install from https://www.python.org/downloads/"
-    Write-Host "    IMPORTANT: Check 'Add Python to PATH' during install"
+    Write-Host "[!] Python 3 not found. Downloading and installing Python 3.12..."
+    $pyUrl = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
+    $pyInstaller = "$env:TEMP\PythonInstaller.exe"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $pyUrl -OutFile $pyInstaller -UseBasicParsing
+        Write-Host "    Installing Python (silent, Add to PATH)..."
+        $pyProcess = Start-Process -FilePath $pyInstaller -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_pip=1", "Include_launcher=1" -Wait -PassThru
+        if ($pyProcess.ExitCode -ne 0 -and $pyProcess.ExitCode -ne 3010) {
+            Write-Host "[!] Python installer returned exit code $($pyProcess.ExitCode)" -ForegroundColor Yellow
+        }
+        # Refresh PATH
+        $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+        Remove-Item $pyInstaller -Force -ErrorAction SilentlyContinue
+        # Re-detect
+        . "$PSScriptRoot\find-python.ps1"
+        $pythonExe = $script:PythonExe
+        if ($pythonExe -and $pythonExe -ne "python") {
+            try {
+                $v = & $pythonExe --version 2>&1
+                if ($v -match "Python 3\.\d+") { $pythonFull = $pythonExe; Write-Host "[+] Python installed: $v" }
+            } catch {}
+        }
+    } catch {
+        Write-Host "[!] Python download failed: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+if (-not $pythonExe) {
+    Write-Host "[!] Python 3 is required." -ForegroundColor Red
+    Write-Host "    Install from https://www.python.org/downloads/" -ForegroundColor Red
+    Write-Host "    IMPORTANT: Check 'Add Python to PATH' during install" -ForegroundColor Red
     exit 1
 }
 
@@ -135,6 +221,7 @@ $pythonConfig = Join-Path $root ".python_path"
 Set-Content -Path $pythonConfig -Value $pythonFull -NoNewline
 Write-Host "[+] Python path saved: $pythonFull"
 
+# -- .NET Framework 4.8 --
 $dotnet = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name Release -ErrorAction SilentlyContinue
 if (-not $dotnet -or $dotnet.Release -lt 528040) {
     Write-Host "[!] .NET Framework 4.8+ required."
