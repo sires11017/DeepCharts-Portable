@@ -18,18 +18,21 @@ class BridgeWrapper {
     static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 
     [DllImport("user32.dll")]
-    static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
 
     [DllImport("user32.dll")]
-    static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    static extern bool IsWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     static extern bool IsWindowVisible(IntPtr hWnd);
 
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    const uint WM_CLOSE = 0x0010;
-    const uint MB_OK = 0x00000000;
+    const uint WM_COMMAND = 0x0111;
+    const uint IDOK = 1;
+    const uint IDCANCEL = 2;
+    const uint SMTO_ABORTIFHUNG = 0x0002;
+    const uint MB_CLASS = 0x0000FFFF;
 
     static void Main(string[] args) {
         SetErrorMode(0x0001 | 0x0002 | 0x0008);
@@ -39,8 +42,8 @@ class BridgeWrapper {
         string bridgePath = System.IO.Path.Combine(baseDir, "bridge", "VolumetricaBridge.exe");
 
         if (!System.IO.File.Exists(bridgePath)) {
-            Console.Error.WriteLine("Bridge not found: " + bridgePath);
-            Environment.Exit(1);
+            Environment.ExitCode = 1;
+            return;
         }
 
         bool waitMode = args.Length > 0 && args[0] == "--wait";
@@ -52,49 +55,36 @@ class BridgeWrapper {
             CreateNoWindow = true
         });
 
-        Thread monitor = new Thread(() => MonitorAndDismissDialogs(proc.Id)) {
-            IsBackground = true
-        };
-        monitor.Start();
-
         if (waitMode) {
+            Thread monitor = new Thread(() => MonitorDialogs(proc)) {
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal
+            };
+            monitor.Start();
             proc.WaitForExit();
         }
     }
 
-    static void MonitorAndDismissDialogs(int childPid) {
+    static void MonitorDialogs(Process target) {
         StringBuilder className = new StringBuilder(256);
-        StringBuilder windowText = new StringBuilder(512);
+        IntPtr dummy;
 
-        while (true) {
-            Thread.Sleep(150);
+        while (!target.HasExited) {
+            Thread.Sleep(200);
             try {
                 EnumWindows((hWnd, _) => {
+                    if (target.HasExited) return false;
+
                     uint pid;
                     GetWindowThreadProcessId(hWnd, out pid);
-                    if (pid != (uint)childPid) return true;
+                    if (pid != (uint)target.Id) return true;
                     if (!IsWindowVisible(hWnd)) return true;
 
                     GetClassName(hWnd, className, 256);
-                    string cls = className.ToString();
+                    if (className.ToString() != "#32770") return true;
 
-                    if (cls == "#32770") {
-                        GetWindowText(hWnd, windowText, 512);
-                        string title = windowText.ToString();
-
-                        if (title.Length == 0 ||
-                            title.IndexOf("Error", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf("Exception", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf("Microsoft", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf(".NET", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf("mscorlib", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf("XmlSerializ", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf("system file", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf("file not found", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                            title.IndexOf("assembly", StringComparison.OrdinalIgnoreCase) >= 0) {
-                            PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                        }
-                    }
+                    SendMessageTimeout(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero,
+                        SMTO_ABORTIFHUNG, 2000, out dummy);
                     return true;
                 }, IntPtr.Zero);
             } catch { }

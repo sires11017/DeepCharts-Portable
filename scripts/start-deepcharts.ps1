@@ -5,6 +5,8 @@ param(
 $ErrorActionPreference = "SilentlyContinue"
 $REPO = Split-Path -Parent $PSScriptRoot
 
+function Write-Log($msg) { if (-not $Background) { Write-Host $msg } }
+
 # ── 1. Ensure hosts file has CQG entries ──
 $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
 $hostsEntries = @(
@@ -21,7 +23,6 @@ foreach ($entry in $hostsEntries) {
         $needsUpdate = $true
         break
     }
-    # Also fix stale LAN IPs
     if ($hostsContent -match "\d+\.\d+\.\d+\.\d+\s+$([regex]::Escape($domain))" -and $hostsContent -notmatch "127\.0\.0\.1\s+$([regex]::Escape($domain))") {
         $needsUpdate = $true
         break
@@ -29,7 +30,6 @@ foreach ($entry in $hostsEntries) {
 }
 
 if ($needsUpdate) {
-    # Remove old broken entries for these domains
     $lines = Get-Content $hostsFile | Where-Object {
         $line = $_
         $keep = $true
@@ -42,7 +42,6 @@ if ($needsUpdate) {
         }
         $keep
     }
-    # Add correct entries
     $lines += ""
     $lines += "# DeepCharts CQG proxy entries"
     $lines += $hostsEntries
@@ -53,6 +52,7 @@ if ($needsUpdate) {
 Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process VolumetricaBridge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process BridgeWrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
 # ── 3. Find Python ──
@@ -79,63 +79,55 @@ if (-not $python) {
     }
 }
 if (-not $python) {
-    Write-Host "ERROR: Python not found"
+    Write-Log "ERROR: Python not found"
     exit 1
 }
 
-# ── 4. Start proxies ──
+# ── 4. Start proxies using Start-Process (reliable argument passing) ──
 $proxyMitmDir = Join-Path $REPO "proxy\mitm"
 $histScript = Join-Path $proxyMitmDir "vol_hist_server.py"
 $bridgeProxy = Join-Path $proxyMitmDir "bridge_mitm_proxy.py"
 
-function Start-HiddenProcess($exe, $args, $workDir) {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $exe
-    $psi.Arguments = $args
-    $psi.WorkingDirectory = $workDir
-    $psi.UseShellExecute = $true
-    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    [System.Diagnostics.Process]::Start($psi) | Out-Null
-}
-
-Start-HiddenProcess $python "`"$histScript`"" $proxyMitmDir
+Start-Process -FilePath $python -ArgumentList "`"$histScript`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden
 Start-Sleep -Seconds 2
-Start-HiddenProcess $python "`"$bridgeProxy`"" $proxyMitmDir
+Start-Process -FilePath $python -ArgumentList "`"$bridgeProxy`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden
 
-# Wait for ports
-$maxWait = 25
+# ── 5. Wait for proxy ports ──
+$maxWait = 30
+$proxyReady = $false
 for ($i = 0; $i -lt $maxWait; $i++) {
     Start-Sleep -Seconds 1
-    $p443 = netstat -ano | findstr ":443 " | findstr "LISTENING"
-    $p12010 = netstat -ano | findstr ":12010 " | findstr "LISTENING"
-    if ($p443 -and $p12010) { break }
+    $p443 = netstat -ano 2>$null | findstr ":443 " | findstr "LISTENING"
+    $p12010 = netstat -ano 2>$null | findstr ":12010 " | findstr "LISTENING"
+    if ($p443 -and $p12010) {
+        $proxyReady = $true
+        break
+    }
 }
 
-# ── 5. Start bridge ──
+if (-not $proxyReady) {
+    Write-Log "WARNING: Proxy ports not ready after ${maxWait}s. Starting bridge anyway."
+}
+
+# ── 6. Start bridge via wrapper ──
 $bridgeExe = Join-Path $REPO "app\bridge\VolumetricaBridge.exe"
 $wrapperExe = Join-Path $REPO "app\BridgeWrapper.exe"
 $bridgeDir = Join-Path $REPO "app\bridge"
 if (Test-Path $bridgeExe) {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
     if (Test-Path $wrapperExe) {
-        $psi.FileName = $wrapperExe
-        $psi.Arguments = "--wait"
+        Start-Process -FilePath $wrapperExe -ArgumentList "--wait" -WorkingDirectory $bridgeDir -WindowStyle Hidden
     } else {
-        $psi.FileName = $bridgeExe
+        Start-Process -FilePath $bridgeExe -WorkingDirectory $bridgeDir -WindowStyle Hidden
     }
-    $psi.WorkingDirectory = $bridgeDir
-    $psi.UseShellExecute = $true
-    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    [System.Diagnostics.Process]::Start($psi) | Out-Null
     Start-Sleep -Seconds 2
 }
 
-# ── 6. Start Deepchart ──
+# ── 7. Start Deepchart ──
 $coreExe = Join-Path $REPO "app\Deepchart.Core.exe"
 if (Test-Path $coreExe) {
     Start-Process -FilePath $coreExe -WorkingDirectory $REPO
 } else {
-    Write-Host "ERROR: Deepchart.Core.exe not found at $coreExe"
+    Write-Log "ERROR: Deepchart.Core.exe not found at $coreExe"
 }
 
 if (-not $Background) {
