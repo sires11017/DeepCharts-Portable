@@ -116,8 +116,17 @@ $bridgeExe = Join-Path $REPO "app\bridge\VolumetricaBridge.exe"
 $wrapperExe = Join-Path $REPO "app\BridgeWrapper.exe"
 $bridgeDir = Join-Path $REPO "app\bridge"
 if (Test-Path $bridgeExe) {
-    $exeToRun = if (Test-Path $wrapperExe) { $wrapperExe } else { $bridgeExe }
-    Start-Process -FilePath $cmdExe -ArgumentList "/c", "start", "/min", "`"$exeToRun`"" -WorkingDirectory $bridgeDir
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    if (Test-Path $wrapperExe) {
+        $psi.FileName = $wrapperExe
+        $psi.Arguments = "--wait"
+    } else {
+        $psi.FileName = $bridgeExe
+    }
+    $psi.WorkingDirectory = $bridgeDir
+    $psi.UseShellExecute = $true
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
     Start-Sleep -Seconds 2
 }
 

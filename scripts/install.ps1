@@ -182,11 +182,27 @@ if (Test-Path $req) {
     Write-Host "[+] Dependencies installed"
 }
 
-# -- 5. Build the launcher --
-Write-Host "[5/9] Building Deepchart.exe launcher..."
+# -- 5. Build the launcher and wrapper --
+Write-Host "[5/9] Building launcher and wrapper..."
 $buildScript = Join-Path $scriptRoot "build_launcher.ps1"
 if (Test-Path $buildScript) {
     & $buildScript -OutputDir $root
+}
+
+# Also build BridgeWrapper
+$wrapperSrc = Join-Path $root "launcher\BridgeWrapper.cs"
+$wrapperOut = Join-Path $root "app\BridgeWrapper.exe"
+if (Test-Path $wrapperSrc) {
+    $cscPaths = @(
+        "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+        "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+    )
+    $csc = $null
+    foreach ($p in $cscPaths) { if (Test-Path $p) { $csc = $p; break } }
+    if ($csc) {
+        & $csc /out:$wrapperOut /target:exe /nologo /optimize /platform:x64 $wrapperSrc 2>&1 | Out-Null
+        if (Test-Path $wrapperOut) { Write-Host "[+] BridgeWrapper.exe built" }
+    }
 }
 
 # -- 6. Copy templates --
@@ -213,13 +229,51 @@ if (Test-Path $tempsDir) {
 
 # -- 7. Fix .NET XML serializer (eliminates "system file not specified" error) --
 Write-Host "[7/10] Fixing .NET XML serializer..."
+$bridgeDir = Join-Path $root "app\bridge"
+$serializerDll = Join-Path $bridgeDir "mscorlib.XmlSerializers.dll"
+
+# Method 1: Try ngen (fastest, generates native image)
 $ngen = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ngen.exe"
 if (Test-Path $ngen) {
-    & $ngen install "mscorlib.XmlSerializers, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" 2>&1 | Out-Null
-    & $ngen update 2>&1 | Out-Null
-    Write-Host "[+] XML serializer native images generated"
+    try {
+        & $ngen install "mscorlib.XmlSerializers, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" 2>&1 | Out-Null
+        & $ngen update 2>&1 | Out-Null
+        Write-Host "[+] XML serializer native images generated via ngen"
+    } catch {
+        Write-Host "  (ngen failed, trying fallback method)"
+    }
+}
+
+# Method 2: If ngen didn't create it, create a stub DLL using ilasm
+if (-not (Test-Path $serializerDll)) {
+    $ilasm = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ilasm.exe"
+    if (Test-Path $ilasm) {
+        $ilSource = @"
+.assembly extern mscorlib
+{
+  .publickeytoken = (B7 7A 5C 56 19 34 E0 89)
+  .ver 4:0:0:0
+}
+.assembly mscorlib.XmlSerializers
+{
+  .ver 4:0:0:0
+}
+.module mscorlib.XmlSerializers.dll
+"@
+        $ilPath = Join-Path $root "scripts\serializer.il"
+        [System.IO.File]::WriteAllText($ilPath, $ilSource)
+        & $ilasm /output:$serializerDll /nologo /dll $ilPath 2>&1 | Out-Null
+        Remove-Item $ilPath -Force -ErrorAction SilentlyContinue
+        if (Test-Path $serializerDll) {
+            Write-Host "[+] XML serializer stub DLL created (prevents error dialog)"
+        }
+    }
+}
+
+if (Test-Path $serializerDll) {
+    Write-Host "[+] XML serializer ready: $serializerDll"
 } else {
-    Write-Host "  (ngen.exe not found - bridge may show non-fatal error)"
+    Write-Host "  (Could not create serializer DLL - wrapper will suppress error dialog)"
 }
 
 # -- 8. Create auto-start on boot --
