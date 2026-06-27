@@ -83,18 +83,18 @@ if (-not $python) {
     exit 1
 }
 
-# ── 4. Start proxies using Start-Process (reliable argument passing) ──
+# ── 4. Start proxies ──
 $proxyMitmDir = Join-Path $REPO "proxy\mitm"
 $histScript = Join-Path $proxyMitmDir "vol_hist_server.py"
 $bridgeProxy = Join-Path $proxyMitmDir "bridge_mitm_proxy.py"
 
-Start-Process -FilePath $python -ArgumentList "`"$histScript`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden
+$histProc = Start-Process -FilePath $python -ArgumentList "`"$histScript`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 2
-Start-Process -FilePath $python -ArgumentList "`"$bridgeProxy`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden
+$proxyProc = Start-Process -FilePath $python -ArgumentList "`"$bridgeProxy`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru
 
-# ── 5. Wait for proxy ports ──
-$maxWait = 30
+# ── 5. Verify proxies started and wait for ports ──
 $proxyReady = $false
+$maxWait = 30
 for ($i = 0; $i -lt $maxWait; $i++) {
     Start-Sleep -Seconds 1
     $p443 = netstat -ano 2>$null | findstr ":443 " | findstr "LISTENING"
@@ -103,10 +103,19 @@ for ($i = 0; $i -lt $maxWait; $i++) {
         $proxyReady = $true
         break
     }
+    # Check if processes died
+    if ($histProc -and $histProc.HasExited) {
+        Write-Log "ERROR: vol_hist_server exited (code $($histProc.ExitCode))"
+        break
+    }
+    if ($proxyProc -and $proxyProc.HasExited) {
+        Write-Log "ERROR: bridge_mitm_proxy exited (code $($proxyProc.ExitCode))"
+        break
+    }
 }
 
 if (-not $proxyReady) {
-    Write-Log "WARNING: Proxy ports not ready after ${maxWait}s. Starting bridge anyway."
+    Write-Log "WARNING: Proxy ports not ready after ${maxWait}s."
 }
 
 # ── 6. Start bridge via wrapper ──

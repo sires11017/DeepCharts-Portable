@@ -46,6 +46,9 @@ Thumbs.db
 Desktop.ini
 .DS_Store
 
+# === Build artifacts ===
+scripts/serializer.il
+
 # === Misc ===
 *.zip
 *.tmp

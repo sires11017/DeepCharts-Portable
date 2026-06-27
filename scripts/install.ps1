@@ -9,7 +9,6 @@
     - Installs Python dependencies
     - Compiles the Deepchart.exe launcher from C# source
     - Copies templates and settings to user Documents
-    - Fixes .NET XML serializer (eliminates "system file not specified" error)
     - Installs auto-start on boot via Windows Startup folder
     - Adds Windows Defender exclusions
 .NOTES
@@ -32,24 +31,24 @@ Write-Host ""
 Write-Host "[*] Repo root: $root"
 
 # -- 0. Kill existing processes --
-Write-Host "[0/9] Stopping existing processes..."
+Write-Host "[0/8] Stopping existing processes..."
 Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process Volumetrica* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process BridgeWrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 Write-Host "[+] Cleaned up"
 
 # -- 1. Prerequisites --
-Write-Host "[1/9] Checking prerequisites..."
+Write-Host "[1/8] Checking prerequisites..."
 $pythonExe = $null
 
-# Try common Python commands
 foreach ($exe in @("python", "python3")) {
     try {
         $v = & $exe --version 2>&1
         if ($v -match "Python 3\.\d+") { $pythonExe = $exe; Write-Host "[+] Python: $v ($exe)"; break }
     } catch {}
 }
-# Also try py launcher
 if (-not $pythonExe) {
     try {
         $v = & py -3 --version 2>&1
@@ -57,7 +56,6 @@ if (-not $pythonExe) {
     } catch {}
 }
 
-# If not in PATH, search common install locations
 if (-not $pythonExe) {
     $searchPaths = @(
         "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
@@ -81,26 +79,17 @@ if (-not $pythonExe) {
     exit 1
 }
 
-# Resolve full Python path for SYSTEM context (scheduled task)
 $pythonFull = $null
 if ($pythonExe -eq "py -3") {
-    # For py launcher, find the actual python.exe it points to
     try {
-        $pyWhere = & where.exe py 2>&1 | Select-Object -First 1
-        $pyDir = Split-Path $pyWhere -Parent
         $pyVersion = & py -3 -c "import sys; print(sys.executable)" 2>&1
-        if ($pyVersion -and (Test-Path $pyVersion)) {
-            $pythonFull = $pyVersion
-        }
+        if ($pyVersion -and (Test-Path $pyVersion)) { $pythonFull = $pyVersion }
     } catch {}
     if (-not $pythonFull) { $pythonFull = "py" }
 } else {
-    # For python/python3, get full path
     try {
         $whereResult = & where.exe $pythonExe 2>&1 | Select-Object -First 1
-        if ($whereResult -and (Test-Path $whereResult)) {
-            $pythonFull = $whereResult
-        }
+        if ($whereResult -and (Test-Path $whereResult)) { $pythonFull = $whereResult }
     } catch {}
     if (-not $pythonFull) {
         $cmdInfo = Get-Command $pythonExe -ErrorAction SilentlyContinue
@@ -111,7 +100,6 @@ if ($pythonExe -eq "py -3") {
 $pythonConfig = Join-Path $root ".python_path"
 Set-Content -Path $pythonConfig -Value $pythonFull -NoNewline
 Write-Host "[+] Python path saved: $pythonFull"
-Write-Host "    (Verify: $(Test-Path $pythonFull))"
 
 $dotnet = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full\" -Name Release -ErrorAction SilentlyContinue
 if (-not $dotnet -or $dotnet.Release -lt 528040) {
@@ -121,23 +109,19 @@ if (-not $dotnet -or $dotnet.Release -lt 528040) {
 Write-Host "[+] .NET Framework 4.8+"
 
 # -- 2. Generate CA certificates --
-Write-Host "[2/9] Generating CA certificates..."
-pushd $root
+Write-Host "[2/8] Generating CA certificates..."
 try {
-    pushd (Join-Path $root "proxy\mitm")
+    Push-Location (Join-Path $root "proxy\mitm")
     & $pythonFull -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
-    popd
+    Pop-Location
     Write-Host "[+] CA certificates ready"
 } catch {
     Write-Host "  (will generate at first proxy launch)"
 }
-popd
 
 # -- 3. Configure hosts file --
-Write-Host "[3/9] Configuring hosts file..."
+Write-Host "[3/8] Configuring hosts file..."
 $hostsIp = "127.0.0.1"
-Write-Host "  Using: $hostsIp (always localhost — works on any network)"
-
 $hostnames = @(
     "demoapi.cqg.com",
     "api.cqg.com",
@@ -150,7 +134,6 @@ if (-not $hostsContent) { $hostsContent = @() }
 $changed = $false
 
 foreach ($hostname in $hostnames) {
-    # Remove any existing entry for this hostname (wrong IP or duplicate)
     $existingLine = $hostsContent | Where-Object { $_ -match "\s+$hostname\s*$" -or $_ -match "\s+$hostname$" }
     if ($existingLine) {
         $oldIp = ($existingLine -split "\s+")[0]
@@ -175,7 +158,7 @@ if ($changed) {
 }
 
 # -- 4. Install Python dependencies --
-Write-Host "[4/9] Installing Python dependencies..."
+Write-Host "[4/8] Installing Python dependencies..."
 $req = Join-Path (Join-Path $root "proxy") "mitm\requirements.txt"
 if (Test-Path $req) {
     try { & $pythonFull -m pip install -r $req -q 2>$null } catch { Write-Host "  (pip warning - dependencies may already be installed)" }
@@ -183,13 +166,12 @@ if (Test-Path $req) {
 }
 
 # -- 5. Build the launcher and wrapper --
-Write-Host "[5/9] Building launcher and wrapper..."
+Write-Host "[5/8] Building launcher and wrapper..."
 $buildScript = Join-Path $scriptRoot "build_launcher.ps1"
 if (Test-Path $buildScript) {
     & $buildScript -OutputDir $root
 }
 
-# Also build BridgeWrapper
 $wrapperSrc = Join-Path $root "launcher\BridgeWrapper.cs"
 $wrapperOut = Join-Path $root "app\BridgeWrapper.exe"
 if (Test-Path $wrapperSrc) {
@@ -206,7 +188,7 @@ if (Test-Path $wrapperSrc) {
 }
 
 # -- 6. Copy templates --
-Write-Host "[6/9] Copying templates and settings..."
+Write-Host "[6/8] Copying templates and settings..."
 $tempsDir = Join-Path $root "userdata"
 $targetDir = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "Deepchart"
 if (Test-Path $tempsDir) {
@@ -227,57 +209,8 @@ if (Test-Path $tempsDir) {
     Write-Host "  (userdata/ not found - run template backup first)"
 }
 
-# -- 7. Fix .NET XML serializer (eliminates "system file not specified" error) --
-Write-Host "[7/10] Fixing .NET XML serializer..."
-$bridgeDir = Join-Path $root "app\bridge"
-$serializerDll = Join-Path $bridgeDir "mscorlib.XmlSerializers.dll"
-
-# Method 1: Try ngen (fastest, generates native image)
-$ngen = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ngen.exe"
-if (Test-Path $ngen) {
-    try {
-        & $ngen install "mscorlib.XmlSerializers, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089" 2>&1 | Out-Null
-        & $ngen update 2>&1 | Out-Null
-        Write-Host "[+] XML serializer native images generated via ngen"
-    } catch {
-        Write-Host "  (ngen failed, trying fallback method)"
-    }
-}
-
-# Method 2: If ngen didn't create it, create a stub DLL using ilasm
-if (-not (Test-Path $serializerDll)) {
-    $ilasm = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ilasm.exe"
-    if (Test-Path $ilasm) {
-        $ilSource = @"
-.assembly extern mscorlib
-{
-  .publickeytoken = (B7 7A 5C 56 19 34 E0 89)
-  .ver 4:0:0:0
-}
-.assembly mscorlib.XmlSerializers
-{
-  .ver 4:0:0:0
-}
-.module mscorlib.XmlSerializers.dll
-"@
-        $ilPath = Join-Path $root "scripts\serializer.il"
-        [System.IO.File]::WriteAllText($ilPath, $ilSource)
-        & $ilasm /output:$serializerDll /nologo /dll $ilPath 2>&1 | Out-Null
-        Remove-Item $ilPath -Force -ErrorAction SilentlyContinue
-        if (Test-Path $serializerDll) {
-            Write-Host "[+] XML serializer stub DLL created (prevents error dialog)"
-        }
-    }
-}
-
-if (Test-Path $serializerDll) {
-    Write-Host "[+] XML serializer ready: $serializerDll"
-} else {
-    Write-Host "  (Could not create serializer DLL - wrapper will suppress error dialog)"
-}
-
-# -- 8. Create auto-start on boot --
-Write-Host "[8/10] Setting up auto-start on boot..."
+# -- 7. Create auto-start on boot --
+Write-Host "[7/8] Setting up auto-start on boot..."
 $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $startupBat = Join-Path $scriptRoot "startup.bat"
 $startupTarget = Join-Path $startupFolder "DeepCharts-startup.bat"
@@ -289,8 +222,8 @@ if (Test-Path $startupBat) {
     Write-Host "  (startup.bat not found in scripts/)"
 }
 
-# -- 9. Add Windows Defender exclusions --
-Write-Host "[9/10] Adding Windows Defender exclusions..."
+# -- 8. Add Windows Defender exclusions --
+Write-Host "[8/8] Adding Windows Defender exclusions..."
 $paths = @($root, (Join-Path $root "app"))
 foreach ($p in $paths) {
     if (Test-Path $p) {
@@ -315,20 +248,23 @@ $shortcut.Description = "DeepCharts Portable - One-Click Launch"
 $shortcut.Save()
 Write-Host "[+] Desktop shortcut created: $shortcutPath"
 
-# Quick proxy test - verify Python can start the scripts
+# Quick proxy test
 Write-Host ""
-Write-Host "[10/10] Verifying proxy can start..."
+Write-Host "[*] Verifying proxy can start..."
 $testResult = & $pythonFull -c "import sys; print('OK')" 2>&1
 if ($testResult -eq "OK") {
     Write-Host "[+] Python can execute scripts"
-    # Test that the proxy scripts can at least be imported
-    pushd (Join-Path $root "proxy\mitm")
-    $importTest = & $pythonFull -c "import config; print('config OK')" 2>&1
-    popd
-    if ($importTest -eq "config OK") {
-        Write-Host "[+] Proxy config loads correctly"
-    } else {
-        Write-Host "[!] Proxy config import failed: $importTest"
+    try {
+        Push-Location (Join-Path $root "proxy\mitm")
+        $importTest = & $pythonFull -c "import config; print('config OK')" 2>&1
+        Pop-Location
+        if ($importTest -eq "config OK") {
+            Write-Host "[+] Proxy config loads correctly"
+        } else {
+            Write-Host "[!] Proxy config import failed: $importTest"
+        }
+    } catch {
+        Write-Host "[!] Proxy config test failed"
     }
 } else {
     Write-Host "[!] Python test failed: $testResult"

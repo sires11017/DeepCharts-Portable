@@ -30,9 +30,7 @@ class BridgeWrapper {
 
     const uint WM_COMMAND = 0x0111;
     const uint IDOK = 1;
-    const uint IDCANCEL = 2;
     const uint SMTO_ABORTIFHUNG = 0x0002;
-    const uint MB_CLASS = 0x0000FFFF;
 
     static void Main(string[] args) {
         SetErrorMode(0x0001 | 0x0002 | 0x0008);
@@ -66,9 +64,7 @@ class BridgeWrapper {
     }
 
     static void MonitorDialogs(Process target) {
-        StringBuilder className = new StringBuilder(256);
         IntPtr dummy;
-
         while (!target.HasExited) {
             Thread.Sleep(200);
             try {
@@ -80,6 +76,7 @@ class BridgeWrapper {
                     if (pid != (uint)target.Id) return true;
                     if (!IsWindowVisible(hWnd)) return true;
 
+                    StringBuilder className = new StringBuilder(256);
                     GetClassName(hWnd, className, 256);
                     if (className.ToString() != "#32770") return true;
 

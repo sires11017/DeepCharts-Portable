@@ -51,9 +51,11 @@ Write-Host "=== PROCESSES ==="
 $pyProcs = Get-Process python -ErrorAction SilentlyContinue
 $dcProcs = Get-Process Deepchart* -ErrorAction SilentlyContinue
 $bridgeProcs = Get-Process Volumetrica* -ErrorAction SilentlyContinue
+$wrapperProcs = Get-Process BridgeWrapper -ErrorAction SilentlyContinue
 if ($pyProcs) { $pyProcs | ForEach-Object { Write-Host "  python PID $($_.Id) started $($_.StartTime)" } } else { Write-Host "  python: NOT RUNNING" }
 if ($dcProcs) { $dcProcs | ForEach-Object { Write-Host "  Deepchart PID $($_.Id) started $($_.StartTime)" } } else { Write-Host "  Deepchart: NOT RUNNING" }
 if ($bridgeProcs) { $bridgeProcs | ForEach-Object { Write-Host "  VolumetricaBridge PID $($_.Id) started $($_.StartTime)" } } else { Write-Host "  VolumetricaBridge: NOT RUNNING" }
+if ($wrapperProcs) { $wrapperProcs | ForEach-Object { Write-Host "  BridgeWrapper PID $($_.Id) started $($_.StartTime)" } } else { Write-Host "  BridgeWrapper: NOT RUNNING" }
 Write-Host ""
 
 # 5. Connections

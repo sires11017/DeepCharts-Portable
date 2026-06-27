@@ -1,9 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Net;
 using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
@@ -55,11 +53,8 @@ class DeepChartsLauncher
 
         if (!StartProxies())
         {
-            if (!StartProxyService())
-            {
-                Fail("Could not start proxy services.\nMake sure Python 3 is installed and run install.ps1 as Admin first.");
-                return false;
-            }
+            Fail("Could not start proxy services.\nMake sure Python 3 is installed and run install.ps1 as Admin first.");
+            return false;
         }
 
         if (!WaitForProxiesReady(30))
@@ -186,47 +181,23 @@ class DeepChartsLauncher
 
         if (!File.Exists(proxyScript) || !File.Exists(histScript)) return false;
 
-        if (!StartHiddenProcess(python, "\"" + histScript + "\"", proxyWorkDir))
-            return false;
+        ProcessStartInfo psiHist = new ProcessStartInfo(python, "\"" + histScript + "\"");
+        psiHist.WorkingDirectory = proxyWorkDir;
+        psiHist.CreateNoWindow = true;
+        psiHist.UseShellExecute = false;
+        try { Process.Start(psiHist); }
+        catch { return false; }
 
         Thread.Sleep(2000);
 
-        if (!StartHiddenProcess(python, "\"" + proxyScript + "\"", proxyWorkDir))
-            return false;
+        ProcessStartInfo psiProxy = new ProcessStartInfo(python, "\"" + proxyScript + "\"");
+        psiProxy.WorkingDirectory = proxyWorkDir;
+        psiProxy.CreateNoWindow = true;
+        psiProxy.UseShellExecute = false;
+        try { Process.Start(psiProxy); }
+        catch { return false; }
 
         return true;
-    }
-
-    static bool StartHiddenProcess(string exe, string args, string workDir)
-    {
-        try
-        {
-            ProcessStartInfo psi = new ProcessStartInfo(exe, args);
-            psi.WorkingDirectory = workDir;
-            psi.CreateNoWindow = true;
-            psi.UseShellExecute = false;
-            Process.Start(psi);
-            return true;
-        }
-        catch { return false; }
-    }
-
-    static bool StartProxyService()
-    {
-        try
-        {
-            string sys = Environment.GetFolderPath(Environment.SpecialFolder.System);
-            string ps = Path.Combine(sys, "WindowsPowerShell", "v1.0", "powershell.exe");
-            if (!File.Exists(ps)) ps = "powershell.exe";
-            string proxyScript = Path.Combine(BaseDir, "scripts", "proxy_service.ps1");
-            string args = "-NoProfile -ExecutionPolicy Bypass -File \"" + proxyScript + "\"";
-            ProcessStartInfo psi = new ProcessStartInfo(ps, args);
-            psi.CreateNoWindow = true;
-            psi.UseShellExecute = false;
-            Process.Start(psi);
-            return true;
-        }
-        catch { return false; }
     }
 
     static void StartBridge()
@@ -237,30 +208,33 @@ class DeepChartsLauncher
 
         if (!File.Exists(bridgeExe)) return;
 
-        Process bridge = new Process();
+        ProcessStartInfo psi = new ProcessStartInfo();
         if (File.Exists(wrapperExe))
         {
-            bridge.StartInfo.FileName = wrapperExe;
-            bridge.StartInfo.Arguments = "--wait";
+            psi.FileName = wrapperExe;
+            psi.Arguments = "--wait";
         }
         else
         {
-            bridge.StartInfo.FileName = bridgeExe;
+            psi.FileName = bridgeExe;
         }
-        bridge.StartInfo.WorkingDirectory = bridgeDir;
-        bridge.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
-        bridge.StartInfo.CreateNoWindow = true;
-        bridge.StartInfo.UseShellExecute = false;
-        try { bridge.Start(); }
+        psi.WorkingDirectory = bridgeDir;
+        psi.WindowStyle = ProcessWindowStyle.Hidden;
+        psi.CreateNoWindow = true;
+        psi.UseShellExecute = false;
+        try { Process.Start(psi); }
         catch { }
     }
 
     static void StartCore()
     {
-        Process core = new Process();
-        core.StartInfo.FileName = Path.Combine(BaseDir, "app", "Deepchart.Core.exe");
-        core.StartInfo.WorkingDirectory = BaseDir;
-        try { core.Start(); }
+        ProcessStartInfo psi = new ProcessStartInfo(
+            Path.Combine(BaseDir, "app", "Deepchart.Core.exe"));
+        psi.WorkingDirectory = BaseDir;
+        psi.UseShellExecute = false;
+
+        Process core;
+        try { core = Process.Start(psi); }
         catch (Exception ex)
         {
             Fail("Failed to start Deepchart: " + ex.Message);
