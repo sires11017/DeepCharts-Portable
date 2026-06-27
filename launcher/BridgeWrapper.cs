@@ -13,16 +13,19 @@ class BridgeWrapper {
     static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
     [DllImport("user32.dll")]
+    static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
     static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [DllImport("user32.dll")]
     static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 
     [DllImport("user32.dll")]
-    static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+    static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
-    static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     static extern bool IsWindow(IntPtr hWnd);
@@ -31,14 +34,14 @@ class BridgeWrapper {
     static extern bool IsWindowVisible(IntPtr hWnd);
 
     [DllImport("user32.dll")]
-    static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    static extern IntPtr FindWindowEx(IntPtr hWndParent, IntPtr hWndChildAfter, string lpszClass, string lpszWindow);
 
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     const uint WM_COMMAND = 0x0111;
     const uint WM_CLOSE = 0x0010;
+    const uint BM_CLICK = 0x00F5;
     const uint IDOK = 1;
-    const uint SMTO_ABORTIFHUNG = 0x0002;
 
     static StreamWriter _log;
     static readonly object _logLock = new object();
@@ -56,7 +59,7 @@ class BridgeWrapper {
     }
 
     static void Main(string[] args) {
-        SetErrorMode(0x0001 | 0x0002 | 0x0008);
+        SetErrorMode(0x0001 | 0x0002 | 0x0004 | 0x0008);
 
         string baseDir = Path.GetDirectoryName(
             System.Reflection.Assembly.GetExecutingAssembly().Location);
@@ -102,24 +105,24 @@ class BridgeWrapper {
         }
 
         if (waitMode) {
-            // Start multiple monitor threads to catch dialogs faster
             Thread monitor = new Thread(() => MonitorDialogs(proc)) {
                 IsBackground = true,
-                Priority = ThreadPriority.BelowNormal
+                Priority = ThreadPriority.AboveNormal
             };
             monitor.Start();
-            Log("Dialog monitor thread started");
+            Log("Per-process dialog monitor started");
 
-            // Also start a global dialog monitor for any orphaned dialogs
-            Thread globalMonitor = new Thread(() => MonitorGlobalDialogs(proc.Id)) {
+            Thread globalMonitor = new Thread(() => MonitorGlobalDialogs()) {
                 IsBackground = true,
-                Priority = ThreadPriority.BelowNormal
+                Priority = ThreadPriority.AboveNormal
             };
             globalMonitor.Start();
-            Log("Global dialog monitor thread started");
+            Log("Global dialog monitor started");
 
             proc.WaitForExit();
-            Log("Bridge process exited, code: " + proc.ExitCode);
+            Log("Bridge exited, code: " + proc.ExitCode);
+
+            Thread.Sleep(5000);
         }
 
         Cleanup();
@@ -134,89 +137,77 @@ class BridgeWrapper {
         } catch { }
     }
 
-    static bool DismissDialog(IntPtr hWnd) {
-        StringBuilder className = new StringBuilder(256);
-        GetClassName(hWnd, className, 256);
-        string cn = className.ToString();
+    static void ClickDialogButton(IntPtr hDialog) {
+        IntPtr hBtn = FindWindowEx(hDialog, IntPtr.Zero, "Button", "OK");
+        if (hBtn == IntPtr.Zero)
+            hBtn = FindWindowEx(hDialog, IntPtr.Zero, "Button", "&OK");
+        if (hBtn == IntPtr.Zero)
+            hBtn = FindWindowEx(hDialog, IntPtr.Zero, "Button", null);
 
-        if (cn != "#32770" && !cn.Contains("#32770")) return false;
+        if (hBtn != IntPtr.Zero) {
+            Log("Found button, sending BM_CLICK");
+            PostMessage(hBtn, BM_CLICK, IntPtr.Zero, IntPtr.Zero);
+        }
+    }
 
-        Log("Dialog found: HWND=" + hWnd + " class=" + cn);
+    static void DismissDialog(IntPtr hWnd) {
+        StringBuilder cn = new StringBuilder(256);
+        GetClassName(hWnd, cn, 256);
+        if (cn.ToString() != "#32770") return;
 
-        // Try WM_CLOSE first - most reliable for error dialogs
-        Log("Sending WM_CLOSE");
-        PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        Log("Dialog found: HWND=" + hWnd);
 
-        // Also try WM_COMMAND/IDOK as backup
-        IntPtr result;
-        SendMessageTimeout(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero,
-            SMTO_ABORTIFHUNG, 500, out result);
+        ClickDialogButton(hWnd);
 
-        return true;
+        PostMessage(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero);
+
+        SendMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
     }
 
     static void MonitorDialogs(Process target) {
         int dismissed = 0;
 
         while (!target.HasExited) {
-            Thread.Sleep(100); // Check every 100ms
+            Thread.Sleep(100);
             try {
                 EnumWindows((hWnd, _) => {
                     if (target.HasExited) return false;
-
                     if (!IsWindowVisible(hWnd)) return true;
 
                     uint pid;
                     GetWindowThreadProcessId(hWnd, out pid);
                     if (pid != (uint)target.Id) return true;
 
-                    if (DismissDialog(hWnd)) {
-                        dismissed++;
-                    }
-
+                    DismissDialog(hWnd);
+                    dismissed++;
                     return true;
                 }, IntPtr.Zero);
             } catch { }
         }
 
-        Log("Monitor ended. Dismissed: " + dismissed);
+        Log("Per-process monitor ended. Dismissed: " + dismissed);
     }
 
-    static void MonitorGlobalDialogs(int bridgePid) {
+    static void MonitorGlobalDialogs() {
         int dismissed = 0;
 
-        Thread.Sleep(500);
+        Thread.Sleep(300);
 
-        while (true) {
-            Thread.Sleep(150);
+        for (int i = 0; i < 300; i++) {
+            Thread.Sleep(100);
             try {
                 EnumWindows((hWnd, _) => {
                     if (!IsWindowVisible(hWnd)) return true;
 
-                    StringBuilder className = new StringBuilder(256);
-                    GetClassName(hWnd, className, 256);
-                    string cn = className.ToString();
-                    if (cn != "#32770") return true;
+                    StringBuilder cn = new StringBuilder(256);
+                    GetClassName(hWnd, cn, 256);
+                    if (cn.ToString() != "#32770") return true;
 
-                    if (DismissDialog(hWnd)) {
-                        dismissed++;
-                    }
-
+                    DismissDialog(hWnd);
+                    dismissed++;
                     return true;
                 }, IntPtr.Zero);
             } catch { }
-
-            try {
-                Process proc = Process.GetProcessById(bridgePid);
-                if (proc == null) break;
-                if (proc.HasExited) {
-                    Thread.Sleep(1000);
-                    break;
-                }
-            } catch {
-                Thread.Sleep(1000);
-                break;
-            }
         }
 
         Log("Global monitor ended. Dismissed: " + dismissed);
