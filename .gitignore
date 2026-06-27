@@ -21,6 +21,8 @@ userdata/Trading Account/
 userdata/Hist Fills/
 userdata/Screenshots/
 userdata/Import/
+userdata/SimAccount/
+userdata/Trade Copier/
 
 # === Binary artifacts ===
 *.pk12

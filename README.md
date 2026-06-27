@@ -8,44 +8,45 @@ A self-contained, portable DeepCharts trading environment with a CQG MITM proxy,
 
 | Requirement | Check | Install if missing |
 |-------------|-------|--------------------|
-| **Windows OS** | `echo %OS%` → `Windows_NT` | N/A |
+| **Windows 10/11** | `echo %OS%` → `Windows_NT` | N/A |
 | **Python 3.10+** | `python --version` | python.org, check "Add to PATH" |
-| **pip** | `pip --version` | Comes with Python |
-| **Admin access** | `net session` | Need admin for hosts + port 443 |
-| **.NET 4.8** | Already on Win10/11 | N/A |
+| **Git** | `git --version` | git-scm.com |
+| **Admin access** | `net session` | Only needed for one-time install |
 
-### Step 1: Clone
+.NET Framework 4.8 is already installed on all Windows 10/11 systems.
+
+### Step 1: Clone and Install
+
+Open PowerShell as Administrator, then run:
 
 ```powershell
-cd C:\Users\$env:USERNAME\Documents
+cd "$env:USERPROFILE\Documents"
 git clone https://github.com/sires11017/DeepCharts-Portable.git DeepCharts
 cd DeepCharts
-```
-
-### Step 2: Install (one-time, as Admin)
-
-```powershell
 .\scripts\install.ps1
 ```
 
-What it does:
+What `install.ps1` does (one-time, requires Admin):
 1. Verifies Python 3 and .NET 4.8
 2. Generates CA certificates in `certs/mitm_ca/`
-3. Adds hosts file entries for CQG domains (demoapi.cqg.com, api.cqg.com, depth-it.historical.deepcharts.com, data-b.historical.deepcharts.com)
+3. Adds hosts file entries for CQG domains (127.0.0.1)
 4. Installs Python dependencies (cryptography, websockets, protobuf)
-5. Compiles the launcher from C# source (`launcher/Launcher.cs` → `Deepchart.exe`)
-6. Copies templates from `userdata/` to `Documents\Deepchart\`
-7. Creates a Windows Scheduled Task `DeepChartsProxy` (runs at login as SYSTEM)
+5. Compiles the launcher from C# source
+6. Copies templates to `Documents\Deepchart\`
+7. Installs auto-start on boot via Windows Startup folder
 8. Adds Windows Defender exclusions
 9. Creates desktop shortcut
 
-### Step 3: Launch
+### Step 2: Launch
 
-Double-click `Deepchart.exe` at the repo root. Or use the desktop shortcut. Everything starts automatically — proxy, bridge, Deepchart. No console windows.
+Close the Administrator window. Then either:
+- **Double-click** `Deepchart.exe` at the repo root
+- **Use the desktop shortcut** created by install
+- **Pin to taskbar**: right-click `Deepchart.exe` → Pin to taskbar
 
-To pin to taskbar: right-click `Deepchart.exe` → Pin to taskbar.
+Everything starts automatically — proxy, bridge, Deepchart. No console windows.
 
-### Step 4: Connect in Deepchart
+### Step 3: Connect in Deepchart
 
 1. Open Deepchart
 2. Go to Connections → Add New
@@ -54,7 +55,7 @@ To pin to taskbar: right-click `Deepchart.exe` → Pin to taskbar.
 5. Enter your AMP/CQG demo credentials
 6. Click Connect
 
-### If Things Break
+### Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
@@ -66,79 +67,7 @@ To pin to taskbar: right-click `Deepchart.exe` → Pin to taskbar.
 | Deepchart won't start | Kill all: `Get-Process python,Deepchart,Volumetrica* \| Stop-Process -Force` then double-click `Deepchart.exe` |
 | Need to use MotiveWave/QuantTower | Run `.\scripts\toggle-hosts.ps1` to remove hosts entries. Run again to re-add for Deepchart. |
 
----
-
-## AI Agent Setup Prompt
-
-Copy the entire block below and paste it to any AI agent on a fresh PC. It will set up everything automatically.
-
-```
-You are setting up the DeepCharts Portable trading platform on a fresh Windows PC. This is a personal charting and template management tool for educational trading research. Follow these steps exactly, in order.
-
-Step 1: Check Prerequisites
-
-Run these commands in PowerShell and verify output:
-
-    python --version
-    pip --version
-
-If Python says "not recognized", install from https://www.python.org/downloads/ with "Add Python to PATH" checked, then restart PowerShell.
-
-Step 2: Clone the Repository
-
-    cd "$env:USERPROFILE\Documents"
-    git clone https://github.com/sires11017/DeepCharts-Portable.git DeepCharts
-    cd DeepCharts
-
-Step 3: Run the Installer (as Admin)
-
-Right-click PowerShell -> Run as Administrator, then:
-
-    cd "$env:USERPROFILE\Documents\DeepCharts"
-    .\scripts\install.ps1
-
-Wait for it to finish. It sets up certificates, hosts, dependencies, and compiles the launcher.
-
-Step 4: Verify Installation
-
-    Get-NetTCPConnection -LocalPort 443 -ErrorAction SilentlyContinue | Select-Object LocalPort, State
-    Get-NetTCPConnection -LocalPort 12010 -ErrorAction SilentlyContinue | Select-Object LocalPort, State
-
-Both should show LISTENING.
-
-Step 5: Launch Deepchart
-
-Close the Administrator PowerShell. Open a regular PowerShell and run:
-
-    & "$env:USERPROFILE\Documents\DeepCharts\Deepchart.exe"
-
-Or navigate to $env:USERPROFILE\Documents\DeepCharts and double-click Deepchart.exe.
-
-Step 6: Connect in Deepchart (IMPORTANT - do not skip)
-
-Once Deepchart opens:
-1. Click "Connections" in the top menu
-2. Click "Add New"
-3. Select "CQG" as the connection type
-4. Enable "Use Demo Credentials"
-5. Enter your AMP/CQG demo username and password
-6. Click "Connect"
-7. Wait for the connection status to show "Connected"
-8. Open a chart — it should now show live price data
-
-Step 7: Verify Data Flow
-
-If the chart shows "building chart" or no data:
-1. Kill all processes: Get-Process python,Deepchart,Volumetrica* -ErrorAction SilentlyContinue | Stop-Process -Force
-2. Re-launch Deepchart.exe
-3. Reconnect in Connections -> CQG -> Demo Credentials -> Connect
-
-If still no data, run the diagnostic:
-
-    powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Documents\DeepCharts\scripts\diagnose.ps1"
-
-Copy the full output and send it for troubleshooting.
-```
+Run `.\scripts\diagnose.ps1` to get a full diagnostic report.
 
 ---
 
@@ -162,33 +91,36 @@ Deepchart.exe ──▶ VolumetricaBridge.exe ──▶ Bridge MITM Proxy ──
 
 ```
 DeepCharts-Portable/
-├── Deepchart.exe           # Launcher (double-click to run)
-├── app/                    # Runtime binaries (hidden from user)
-│   ├── Deepchart.Core.exe  # Patched Deepchart (4.5 MB)
-│   ├── bridge/             # VolumetricaBridge + 50+ DLLs
-│   ├── Default/            # Symbol DB, exchanges
-│   ├── Sounds/             # Voice + alert sounds
-│   ├── Resources/          # Splash video
-│   └── de/es/it/zh/        # Localization
-├── userdata/               # Templates, workspaces, settings
-│   ├── Workspace/          # Saved chart workspaces
-│   ├── Template/           # Chart templates
-│   ├── Indicator Template/ # Indicator presets
-│   ├── Settings/           # General + symbol configs
-│   ├── Trading Account/    # Sim + live accounts
-│   ├── SimAccount/         # Sim definitions
-│   ├── Hist Fills/         # Trade fill history
-│   └── Alert Sound/        # Alert WAVs
+├── Deepchart.exe              # Launcher (double-click to run)
+├── app/                       # Runtime binaries
+│   ├── Deepchart.Core.exe     # Patched Deepchart
+│   ├── BridgeWrapper.exe      # Dialog auto-dismiss wrapper
+│   ├── bridge/                # VolumetricaBridge + DLLs
+│   ├── Default/               # Symbol DB, exchanges
+│   ├── Sounds/                # Voice + alert sounds
+│   └── de/es/it/zh/           # Localization
+├── userdata/                  # Templates, workspaces, settings
+│   ├── Workspace/             # Saved chart workspaces
+│   ├── Template/              # Chart templates
+│   ├── Indicator Template/    # Indicator presets
+│   ├── Settings/              # General + symbol configs
+│   └── Alert Sound/           # Alert WAVs
 ├── proxy/
-│   ├── mitm/               # MITM proxy + vol_hist server
-│   └── cqg/                # CQG protobuf definitions + tests
-├── certs/mitm_ca/          # TLS certificates
-├── launcher/Launcher.cs    # C# launcher source
+│   ├── mitm/                  # MITM proxy + vol_hist server
+│   └── cqg/                   # CQG protobuf definitions + tests
+├── certs/mitm_ca/             # TLS certificates (generated)
+├── launcher/                  # C# source code
+│   ├── Launcher.cs            # Main launcher
+│   └── BridgeWrapper.cs       # Dialog auto-dismiss
 ├── scripts/
-│   ├── install.ps1         # One-click admin setup
-│   ├── proxy_service.ps1   # Background service
-│   ├── build_launcher.ps1  # Compile launcher
-│   └── toggle-hosts.ps1    # Toggle CQG hosts entries
+│   ├── install.ps1            # One-time admin setup
+│   ├── start-deepcharts.ps1   # Full startup chain
+│   ├── startup.bat            # Boot auto-start
+│   ├── find-python.ps1        # Shared Python detection
+│   ├── proxy_service.ps1      # Background service
+│   ├── build_launcher.ps1     # Compile launcher
+│   ├── diagnose.ps1           # Full diagnostic
+│   └── toggle-hosts.ps1       # Toggle CQG hosts entries
 └── docs/
 ```
 
@@ -231,19 +163,20 @@ app\Deepchart.Core.exe
 
 ## Recompile Launcher
 
-If you modify `launcher/Launcher.cs`:
+If you modify `launcher/Launcher.cs` or `launcher/BridgeWrapper.cs`:
 
 ```powershell
 .\scripts\build_launcher.ps1
 ```
 
-Output: `Deepchart.exe` at repo root.
+Output: `Deepchart.exe` at repo root, `app\BridgeWrapper.exe`.
 
 ## Logs
 
-Each run creates timestamped logs in `logs/`:
-- `bridge_mitm_YYYYMMDD_HHMMSS.log` — Full protobuf trace
-- `vol_hist_YYYYMMDD_HHMMSS.log` — Historical server activity
+- `logs/bridge_mitm_YYYYMMDD_HHMMSS.log` — Full protobuf trace
+- `logs/vol_hist_YYYYMMDD_HHMMSS.log` — Historical server activity
+- `logs/launcher.log` — Launcher startup trace
+- `%APPDATA%\DeepCharts\bridge_wrapper.log` — BridgeWrapper dialog dismissals
 
 ## File Reference
 
@@ -251,17 +184,22 @@ Each run creates timestamped logs in `logs/`:
 |------|---------|
 | `Deepchart.exe` | Launcher — starts everything, no console |
 | `app/Deepchart.Core.exe` | Patched Deepchart core |
+| `app/BridgeWrapper.exe` | Auto-dismisses .NET error dialogs |
 | `app/bridge/VolumetricaBridge.exe` | Patched VolumetricaBridge |
 | `proxy/mitm/bridge_mitm_proxy.py` | MITM proxy — intercepts Bridge↔CQG |
 | `proxy/mitm/vol_hist_server.py` | Mock historical data server |
 | `proxy/mitm/config.py` | Central config (env-var overridable) |
 | `proxy/cqg/WebAPI/` | CQG protobuf Python definitions |
 | `proxy/cqg/proto/` | CQG .proto files + protoc.exe |
-| `certs/mitm_ca/` | TLS certificates |
+| `certs/mitm_ca/` | TLS certificates (generated at install) |
 | `launcher/Launcher.cs` | C# launcher source |
+| `launcher/BridgeWrapper.cs` | C# wrapper source |
 | `scripts/install.ps1` | One-time admin setup |
+| `scripts/start-deepcharts.ps1` | Full startup chain |
+| `scripts/startup.bat` | Boot auto-start entry point |
+| `scripts/find-python.ps1` | Shared Python detection |
+| `scripts/diagnose.ps1` | Full diagnostic report |
 | `scripts/proxy_service.ps1` | Background proxy service |
-| `scripts/build_launcher.ps1` | Compile launcher |
 | `scripts/toggle-hosts.ps1` | Toggle CQG hosts entries |
 | `userdata/` | Templates, workspaces, settings, sounds |
 
