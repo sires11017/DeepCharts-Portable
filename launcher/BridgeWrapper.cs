@@ -139,31 +139,19 @@ class BridgeWrapper {
         GetClassName(hWnd, className, 256);
         string cn = className.ToString();
 
-        // Match standard dialog class (#32770) or any dialog-like class
         if (cn != "#32770" && !cn.Contains("#32770")) return false;
 
         Log("Dialog found: HWND=" + hWnd + " class=" + cn);
 
-        // Try multiple approaches to dismiss
-        // 1. WM_COMMAND with IDOK
+        // Try WM_CLOSE first - most reliable for error dialogs
+        Log("Sending WM_CLOSE");
+        PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+
+        // Also try WM_COMMAND/IDOK as backup
         IntPtr result;
-        IntPtr sent = SendMessageTimeout(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero,
-            SMTO_ABORTIFHUNG, 1000, out result);
-        if (sent != IntPtr.Zero) {
-            Log("WM_COMMAND/IDOK sent successfully");
-            return true;
-        }
+        SendMessageTimeout(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero,
+            SMTO_ABORTIFHUNG, 500, out result);
 
-        // 2. PostMessage WM_COMMAND (async, non-blocking)
-        bool posted = PostMessage(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero);
-        if (posted) {
-            Log("PostMessage WM_COMMAND/IDOK sent");
-            return true;
-        }
-
-        // 3. WM_CLOSE as last resort
-        Log("Trying WM_CLOSE");
-        SendMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
         return true;
     }
 
