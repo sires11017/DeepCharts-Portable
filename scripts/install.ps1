@@ -30,46 +30,90 @@ Write-Host ""
 
 Write-Host "[*] Repo root: $root"
 
-# -- 0. Kill existing processes --
-Write-Host "[0/8] Stopping existing processes..."
+# -- 0. Kill existing processes and check port conflicts --
+Write-Host "[0/8] Stopping existing processes and checking port conflicts..."
 Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process Volumetrica* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process BridgeWrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
+
+# Check for port 443 conflicts
+$port443 = Get-NetTCPConnection -LocalPort 443 -ErrorAction SilentlyContinue
+if ($port443) {
+    $pid443 = ($port443 | Select-Object -First 1).OwningProcess
+    $procName = (Get-Process -Id $pid443 -ErrorAction SilentlyContinue).ProcessName
+    Write-Host "[!] WARNING: Port 443 is already in use by: $procName (PID $pid443)"
+    Write-Host "    DeepCharts needs port 443 for the MITM proxy."
+    Write-Host ""
+    Write-Host "    Common fixes:"
+    Write-Host "    - If WinRM: net stop winrm"
+    Write-Host "    - If IIS: net stop W3SVC"
+    Write-Host "    - If iphlpsvc: netsh interface portproxy show all"
+    Write-Host "    - If Docker: stop Docker Desktop"
+    Write-Host "    - If WSL2 mirrored mode: set networkingMode=NAT in %USERPROFILE%\\.wslconfig"
+    Write-Host ""
+
+    $procPath = (Get-Process -Id $pid443 -ErrorAction SilentlyContinue).Path
+    Write-Host "    Process path: $procPath"
+    Write-Host ""
+    $continue = Read-Host "    Continue anyway? (y/N)"
+    if ($continue -ne "y") {
+        Write-Host "    Aborting. Fix the port conflict and try again."
+        exit 1
+    }
+}
+
+# Check port 12010
+$port12010 = Get-NetTCPConnection -LocalPort 12010 -ErrorAction SilentlyContinue
+if ($port12010) {
+    $pid12010 = ($port12010 | Select-Object -First 1).OwningProcess
+    $procName = (Get-Process -Id $pid12010 -ErrorAction SilentlyContinue).ProcessName
+    Write-Host "[!] WARNING: Port 12010 is already in use by: $procName (PID $pid12010)"
+    Write-Host "    DeepCharts needs port 12010 for the historical mock server."
+    Write-Host ""
+}
+
 Write-Host "[+] Cleaned up"
 
 # -- 1. Prerequisites --
 Write-Host "[1/8] Checking prerequisites..."
-$pythonExe = $null
+. "$PSScriptRoot\find-python.ps1"
+$pythonExe = $script:PythonExe
+$pythonFull = $null
 
-foreach ($exe in @("python", "python3")) {
-    try {
-        $v = & $exe --version 2>&1
-        if ($v -match "Python 3\.\d+") { $pythonExe = $exe; Write-Host "[+] Python: $v ($exe)"; break }
-    } catch {}
-}
-if (-not $pythonExe) {
-    try {
-        $v = & py -3 --version 2>&1
-        if ($v -match "Python 3\.\d+") { $pythonExe = "py -3"; Write-Host "[+] Python: $v (py -3)"; }
-    } catch {}
-}
-
-if (-not $pythonExe) {
-    $searchPaths = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
-        "C:\Python3*\python.exe",
-        "$env:ProgramFiles\Python3*\python.exe",
-        "$env:ProgramFiles(x86)\Python3*\python.exe"
-    )
-    foreach ($pattern in $searchPaths) {
-        $found = Resolve-Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) {
-            $v = & $found.Path --version 2>&1
-            if ($v -match "Python 3\.\d+") { $pythonExe = $found.Path; Write-Host "[+] Python: $v ($pythonExe)"; break }
-        }
+if (-not $pythonExe -or $pythonExe -eq "python") {
+    # find-python.ps1 couldn't find a real Python, try harder
+    $pythonExe = $null
+    foreach ($exe in @("python", "python3")) {
+        try {
+            $info = Get-Command $exe -ErrorAction SilentlyContinue
+            if ($info -and $info.Source -and $info.Source -notmatch "WindowsApps") {
+                $v = & $exe --version 2>&1
+                if ($v -match "Python 3\.\d+") {
+                    $pythonExe = $exe
+                    $pythonFull = $info.Source
+                    Write-Host "[+] Python: $v ($pythonExe)"
+                    break
+                }
+            }
+        } catch {}
     }
+    if (-not $pythonExe) {
+        try {
+            $v = & py -3 --version 2>&1
+            if ($v -match "Python 3\.\d+") {
+                $pythonExe = "py -3"
+                try { $pythonFull = & py -3 -c "import sys; print(sys.executable)" 2>&1 } catch {}
+                Write-Host "[+] Python: $v (py -3)"
+            }
+        } catch {}
+    }
+} else {
+    try {
+        $v = & $pythonExe --version 2>&1
+        if ($v -match "Python 3\.\d+") { Write-Host "[+] Python: $v ($pythonExe)" }
+    } catch {}
 }
 
 if (-not $pythonExe) {
@@ -79,22 +123,12 @@ if (-not $pythonExe) {
     exit 1
 }
 
-$pythonFull = $null
-if ($pythonExe -eq "py -3") {
+# Save full path
+if (-not $pythonFull) {
     try {
-        $pyVersion = & py -3 -c "import sys; print(sys.executable)" 2>&1
-        if ($pyVersion -and (Test-Path $pyVersion)) { $pythonFull = $pyVersion }
-    } catch {}
-    if (-not $pythonFull) { $pythonFull = "py" }
-} else {
-    try {
-        $whereResult = & where.exe $pythonExe 2>&1 | Select-Object -First 1
-        if ($whereResult -and (Test-Path $whereResult)) { $pythonFull = $whereResult }
-    } catch {}
-    if (-not $pythonFull) {
         $cmdInfo = Get-Command $pythonExe -ErrorAction SilentlyContinue
         if ($cmdInfo -and $cmdInfo.Source) { $pythonFull = $cmdInfo.Source }
-    }
+    } catch {}
     if (-not $pythonFull) { $pythonFull = $pythonExe }
 }
 $pythonConfig = Join-Path $root ".python_path"

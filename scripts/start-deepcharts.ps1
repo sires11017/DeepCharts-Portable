@@ -22,7 +22,39 @@ if (-not $python) {
     Write-Err "Python not found. Install Python 3 and run install.ps1."
     exit 1
 }
-Write-Log "[+] Python: $python"
+
+# Verify Python is real (not Store stub)
+if ($python -match "WindowsApps") {
+    Write-Err "Detected Windows Store Python stub (not real Python)."
+    Write-Err "Install Python from python.org with 'Add to PATH' checked."
+    Write-Err "Or disable Store aliases: Settings > Apps > App execution aliases > OFF for python.exe"
+    exit 1
+}
+
+# Verify Python works
+try {
+    $v = & $python --version 2>&1
+    if ($v -notmatch "Python 3\.\d+") {
+        Write-Err "Python detection failed. Got: $v"
+        exit 1
+    }
+} catch {
+    Write-Err "Python found at '$python' but cannot execute: $($_.Exception.Message)"
+    exit 1
+}
+
+Write-Log "[+] Python: $python ($v)"
+
+# -- 1b. Pre-flight checks --
+# Verify ports are available (after killing old processes)
+$port443 = Get-NetTCPConnection -LocalPort 443 -ErrorAction SilentlyContinue
+if ($port443) {
+    $pid443 = ($port443 | Select-Object -First 1).OwningProcess
+    $procName = (Get-Process -Id $pid443 -ErrorAction SilentlyContinue).ProcessName
+    Write-Err "Port 443 is already in use by: $procName (PID $pid443)"
+    Write-Err "Run install.ps1 to check and fix port conflicts, or stop the conflicting service."
+    exit 1
+}
 
 # -- 2. Ensure hosts file has CQG entries --
 $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"

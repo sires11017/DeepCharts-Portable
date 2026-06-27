@@ -5,8 +5,8 @@
 .DESCRIPTION
     Searches for Python 3 using multiple methods:
     1. .python_path config file (from installer)
-    2. python / python3 in PATH
-    3. py launcher
+    2. py launcher (most reliable)
+    3. python / python3 in PATH (filters out Windows Store stubs)
     4. Common install locations
     5. AppData\Local\Programs\Python
 .EXAMPLE
@@ -16,23 +16,64 @@
 
 $script:PythonExe = $null
 
+# Helper: Test if a python path is real (not a Windows Store stub)
+function Test-RealPython {
+    param([string]$Path)
+    if (-not $Path) { return $false }
+    # Windows Store stubs live in WindowsApps
+    if ($Path -match "WindowsApps") { return $false }
+    # Try to get version
+    try {
+        $v = & $Path --version 2>&1
+        if ($v -match "Python 3\.\d+") { return $true }
+    } catch {}
+    return $false
+}
+
 # 1. Check saved config from installer
-$pyPathFile = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) ".python_path"
+$rootDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$pyPathFile = Join-Path $rootDir ".python_path"
 if (Test-Path $pyPathFile) {
     try {
         $saved = (Get-Content $pyPathFile -Raw).Trim()
         if ($saved -and (Test-Path $saved)) {
-            $script:PythonExe = $saved
-            return
+            # Verify it's not a Store stub
+            if ($saved -notmatch "WindowsApps") {
+                $script:PythonExe = $saved
+                return
+            }
         }
     } catch {}
 }
 
-# 2. Try commands in PATH
+# 2. Try py launcher (most reliable - bypasses PATH issues)
+try {
+    $pyCmd = Get-Command "py" -ErrorAction SilentlyContinue
+    if ($pyCmd) {
+        $test = & $pyCmd.Source -3 --version 2>&1
+        if ($test -match "Python 3") {
+            $pyExe = & $pyCmd.Source -3 -c "import sys; print(sys.executable)" 2>&1
+            if ($pyExe -and (Test-Path $pyExe) -and $pyExe -notmatch "WindowsApps") {
+                $script:PythonExe = $pyExe
+                return
+            }
+            # If we can't get the path, at least we know py works
+            $script:PythonExe = $pyCmd.Source
+            return
+        }
+    }
+} catch {}
+
+# 3. Try python/python3 in PATH (filter out Store stubs)
 foreach ($cmd in @("python", "python3")) {
     try {
         $info = Get-Command $cmd -ErrorAction SilentlyContinue
-        if ($info -and $info.Source -and (Test-Path $info.Source)) {
+        if ($info -and $info.Source) {
+            # Skip Windows Store stubs
+            if ($info.Source -match "WindowsApps") {
+                Write-Host "  (Skipping Store stub: $($info.Source))" -ForegroundColor Yellow
+                continue
+            }
             $v = & $info.Source --version 2>&1
             if ($v -match "Python 3\.\d+") {
                 $script:PythonExe = $info.Source
@@ -41,23 +82,6 @@ foreach ($cmd in @("python", "python3")) {
         }
     } catch {}
 }
-
-# 3. Try py launcher
-try {
-    $pyPath = (Get-Command "py" -ErrorAction SilentlyContinue).Source
-    if ($pyPath) {
-        $test = & $pyPath -3 --version 2>&1
-        if ($test -match "Python 3") {
-            $pyExe = & $pyPath -3 -c "import sys; print(sys.executable)" 2>&1
-            if ($pyExe -and (Test-Path $pyExe)) {
-                $script:PythonExe = $pyExe
-                return
-            }
-            $script:PythonExe = $pyPath
-            return
-        }
-    }
-} catch {}
 
 # 4. Search common install locations (wildcards)
 $searchPatterns = @(
@@ -68,13 +92,30 @@ $searchPatterns = @(
 )
 foreach ($pattern in $searchPatterns) {
     try {
-        $found = Resolve-Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+        $found = Resolve-Path $pattern -ErrorAction SilentlyContinue | Sort-Object Path -Descending | Select-Object -First 1
         if ($found) {
-            $script:PythonExe = $found.Path
-            return
+            if (Test-RealPython -Path $found.Path) {
+                $script:PythonExe = $found.Path
+                return
+            }
         }
     } catch {}
 }
 
-# 5. Last resort - just return "python" and hope PATH works
+# 5. AppData\Local\Programs\Python (python.org default)
+$appDataPython = "$env:LOCALAPPDATA\Programs\Python"
+if (Test-Path $appDataPython) {
+    Get-ChildItem $appDataPython -Filter "Python3*" -Directory -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending |
+        ForEach-Object {
+            $exe = Join-Path $_.FullName "python.exe"
+            if (Test-Path $exe) {
+                $script:PythonExe = $exe
+                return
+            }
+        }
+    if ($script:PythonExe) { return }
+}
+
+# 6. Last resort - return "python" and let caller handle it
 $script:PythonExe = "python"
