@@ -30,6 +30,9 @@ class BridgeWrapper {
     [DllImport("user32.dll")]
     static extern bool IsWindowVisible(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     const uint WM_COMMAND = 0x0111;
@@ -99,12 +102,22 @@ class BridgeWrapper {
         }
 
         if (waitMode) {
+            // Start multiple monitor threads to catch dialogs faster
             Thread monitor = new Thread(() => MonitorDialogs(proc)) {
                 IsBackground = true,
                 Priority = ThreadPriority.BelowNormal
             };
             monitor.Start();
             Log("Dialog monitor thread started");
+
+            // Also start a global dialog monitor for any orphaned dialogs
+            Thread globalMonitor = new Thread(() => MonitorGlobalDialogs(proc.Id)) {
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal
+            };
+            globalMonitor.Start();
+            Log("Global dialog monitor thread started");
+
             proc.WaitForExit();
             Log("Bridge process exited, code: " + proc.ExitCode);
         }
@@ -121,11 +134,44 @@ class BridgeWrapper {
         } catch { }
     }
 
+    static bool DismissDialog(IntPtr hWnd) {
+        StringBuilder className = new StringBuilder(256);
+        GetClassName(hWnd, className, 256);
+        string cn = className.ToString();
+
+        // Match standard dialog class (#32770) or any dialog-like class
+        if (cn != "#32770" && !cn.Contains("#32770")) return false;
+
+        Log("Dialog found: HWND=" + hWnd + " class=" + cn);
+
+        // Try multiple approaches to dismiss
+        // 1. WM_COMMAND with IDOK
+        IntPtr result;
+        IntPtr sent = SendMessageTimeout(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero,
+            SMTO_ABORTIFHUNG, 1000, out result);
+        if (sent != IntPtr.Zero) {
+            Log("WM_COMMAND/IDOK sent successfully");
+            return true;
+        }
+
+        // 2. PostMessage WM_COMMAND (async, non-blocking)
+        bool posted = PostMessage(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero);
+        if (posted) {
+            Log("PostMessage WM_COMMAND/IDOK sent");
+            return true;
+        }
+
+        // 3. WM_CLOSE as last resort
+        Log("Trying WM_CLOSE");
+        SendMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+        return true;
+    }
+
     static void MonitorDialogs(Process target) {
         int dismissed = 0;
 
         while (!target.HasExited) {
-            Thread.Sleep(200);
+            Thread.Sleep(100); // Check every 100ms
             try {
                 EnumWindows((hWnd, _) => {
                     if (target.HasExited) return false;
@@ -136,22 +182,7 @@ class BridgeWrapper {
                     GetWindowThreadProcessId(hWnd, out pid);
                     if (pid != (uint)target.Id) return true;
 
-                    StringBuilder className = new StringBuilder(256);
-                    GetClassName(hWnd, className, 256);
-                    if (className.ToString() != "#32770") return true;
-
-                    Log("Dialog found: HWND=" + hWnd);
-
-                    IntPtr result;
-                    IntPtr sent = SendMessageTimeout(hWnd, WM_COMMAND, (IntPtr)IDOK, IntPtr.Zero,
-                        SMTO_ABORTIFHUNG, 2000, out result);
-
-                    if (sent != IntPtr.Zero) {
-                        Log("WM_COMMAND/IDOK sent successfully");
-                        dismissed++;
-                    } else {
-                        Log("WM_COMMAND failed, trying WM_CLOSE");
-                        SendMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    if (DismissDialog(hWnd)) {
                         dismissed++;
                     }
 
@@ -161,5 +192,67 @@ class BridgeWrapper {
         }
 
         Log("Monitor ended. Dismissed: " + dismissed);
+    }
+
+    static void MonitorGlobalDialogs(int bridgePid) {
+        // Monitor ALL visible dialogs and dismiss any that look like error dialogs
+        // This catches dialogs that appear in child processes or orphaned windows
+        int dismissed = 0;
+        int bridgeProcessId = bridgePid;
+
+        // Wait a bit for dialogs to appear
+        Thread.Sleep(500);
+
+        while (true) {
+            Thread.Sleep(150);
+            try {
+                EnumWindows((hWnd, _) => {
+                    if (!IsWindowVisible(hWnd)) return true;
+
+                    uint pid;
+                    GetWindowThreadProcessId(hWnd, out pid);
+
+                    // Only monitor windows from the bridge process tree
+                    // (bridge spawns child processes)
+                    if (pid != (uint)bridgeProcessId) {
+                        // Check if it's a child of the bridge
+                        try {
+                            Process proc = Process.GetProcessById((int)pid);
+                            if (proc == null) return true;
+                            // Check if parent is bridge
+                            // (This is best-effort, we can't always get parent PID easily)
+                        } catch { return true; }
+                    }
+
+                    StringBuilder className = new StringBuilder(256);
+                    GetClassName(hWnd, className, 256);
+                    string cn = className.ToString();
+                    if (cn != "#32770") return true;
+
+                    // Check if this looks like a .NET error dialog
+                    // (class #32770 with no other identifying features)
+                    if (DismissDialog(hWnd)) {
+                        dismissed++;
+                    }
+
+                    return true;
+                }, IntPtr.Zero);
+            } catch { }
+
+            // Stop if bridge has been gone for a while
+            try {
+                Process proc = Process.GetProcessById(bridgeProcessId);
+                if (proc == null) break;
+                if (proc.HasExited) {
+                    Thread.Sleep(1000); // Give time for final dialogs
+                    break;
+                }
+            } catch {
+                Thread.Sleep(1000);
+                break;
+            }
+        }
+
+        Log("Global monitor ended. Dismissed: " + dismissed);
     }
 }

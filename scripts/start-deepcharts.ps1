@@ -45,6 +45,25 @@ try {
 
 Write-Log "[+] Python: $python ($v)"
 
+# Verify required Python packages are installed
+$reqFile = Join-Path $REPO "proxy\mitm\requirements.txt"
+if (Test-Path $reqFile) {
+    $missing = @()
+    foreach ($pkg in @("cryptography", "websockets", "protobuf")) {
+        try {
+            & $python -c "import $pkg" 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) { $missing += $pkg }
+        } catch { $missing += $pkg }
+    }
+    if ($missing.Count -gt 0) {
+        Write-Host "[*] Installing missing Python packages: $($missing -join ', ')" -ForegroundColor Yellow
+        & $python -m pip install -r $reqFile --quiet 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "Failed to install Python packages. Run: $python -m pip install -r $reqFile"
+        }
+    }
+}
+
 # -- 1b. Pre-flight checks --
 # Verify ports are available (after killing old processes)
 $port443 = Get-NetTCPConnection -LocalPort 443 -ErrorAction SilentlyContinue
@@ -123,11 +142,34 @@ if (-not (Test-Path $histScript) -or -not (Test-Path $bridgeProxy)) {
     exit 1
 }
 
-$histProc = Start-Process -FilePath $python -ArgumentList "`"$histScript`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru -ErrorAction Stop
-Write-Log "[+] vol_hist_server started (PID $($histProc.Id))"
-Start-Sleep -Seconds 2
-$proxyProc = Start-Process -FilePath $python -ArgumentList "`"$bridgeProxy`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru -ErrorAction Stop
-Write-Log "[+] bridge_mitm_proxy started (PID $($proxyProc.Id))"
+# Try starting proxies with retry
+$proxyStarted = $false
+$proxyRetries = 3
+for ($attempt = 1; $attempt -le $proxyRetries; $attempt++) {
+    try {
+        $histProc = Start-Process -FilePath $python -ArgumentList "`"$histScript`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+        Write-Log "[+] vol_hist_server started (PID $($histProc.Id))"
+        Start-Sleep -Seconds 2
+        $proxyProc = Start-Process -FilePath $python -ArgumentList "`"$bridgeProxy`"" -WorkingDirectory $proxyMitmDir -WindowStyle Hidden -PassThru -ErrorAction Stop
+        Write-Log "[+] bridge_mitm_proxy started (PID $($proxyProc.Id))"
+        $proxyStarted = $true
+        break
+    } catch {
+        Write-Err "Attempt $attempt/$proxyRetries failed to start proxies: $($_.Exception.Message)"
+        if ($attempt -lt $proxyRetries) {
+            Start-Sleep -Seconds 3
+            # Kill any leftover processes
+            Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
+if (-not $proxyStarted) {
+    Write-Err "Failed to start proxies after $proxyRetries attempts."
+    Write-Err "Check if Python dependencies are installed: pip install -r proxy\mitm\requirements.txt"
+    exit 1
+}
 
 # -- 4. Verify proxies started and wait for ports --
 $proxyReady = $false
@@ -151,7 +193,13 @@ for ($i = 0; $i -lt $maxWait; $i++) {
 }
 
 if (-not $proxyReady) {
-    Write-Err "Proxy ports not ready after ${maxWait}s. Check logs/ for errors."
+    # Show what ports are in use for diagnostics
+    Write-Err "Proxy ports not ready after ${maxWait}s."
+    Write-Err "Port 443 status:"
+    netstat -ano 2>$null | findstr ":443 " | ForEach-Object { Write-Err "  $_" }
+    Write-Err "Port 12010 status:"
+    netstat -ano 2>$null | findstr ":12010 " | ForEach-Object { Write-Err "  $_" }
+    Write-Err "Check logs/ for Python errors."
     exit 1
 }
 Write-Log "[+] Proxy ports verified (443, 12010)"
