@@ -8,13 +8,9 @@ userdata/DPC_Log_*.log
 config_local.py
 .python_path
 
-# === Generated certificates (per-machine) ===
-certs/mitm_ca/*.pem
-certs/mitm_ca/*.key
+# === Generated server certs (regenerated per-machine by ensure_ca) ===
 certs/mitm_ca/cert.pem
 certs/mitm_ca/key.pem
-certs/mitm_ca/ca.pem
-certs/mitm_ca/ca.key
 
 # === Personal trading data ===
 userdata/Trading Account/
