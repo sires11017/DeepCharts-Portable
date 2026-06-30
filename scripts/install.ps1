@@ -35,8 +35,16 @@ Write-Host "[0/8] Stopping existing processes and checking port conflicts..."
 Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process Volumetrica* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process BridgeWrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
+# Only kill Python processes that are our proxies
+Get-Process python -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+        $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+        if ($cmdLine -match "bridge_mitm_proxy|vol_hist_server") {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+Start-Sleep -Seconds 3
 
 # Check for port 443 conflicts
 $port443 = Get-NetTCPConnection -LocalPort 443 -ErrorAction SilentlyContinue
@@ -233,9 +241,12 @@ Write-Host "[+] .NET Framework 4.8+"
 Write-Host "[2/8] Generating CA certificates..."
 try {
     Push-Location (Join-Path $root "proxy\mitm")
-    & $pythonFull -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
-    Pop-Location
-    Write-Host "[+] CA certificates ready"
+    try {
+        & $pythonFull -c "import config; from bridge_mitm_proxy import ensure_ca; ensure_ca()"
+        Write-Host "[+] CA certificates ready"
+    } finally {
+        Pop-Location
+    }
 } catch {
     Write-Host "  (will generate at first proxy launch)"
 }
@@ -402,15 +413,26 @@ if (Test-Path $tempsDir) {
 
 # -- 7. Create auto-start on boot --
 Write-Host "[7/8] Setting up auto-start on boot..."
+
+# Save install path to registry so startup.bat can find the repo at runtime
+$regPath = "HKCU:\Software\DeepCharts"
+try {
+    New-Item -Path $regPath -Force -ErrorAction Stop | Out-Null
+    Set-ItemProperty -Path $regPath -Name "InstallPath" -Value $root -Force -ErrorAction Stop
+    Write-Host "[+] Install path saved to registry: $root"
+} catch {
+    Write-Host "  [!] Failed to write registry: $($_.Exception.Message)"
+}
+
 $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
 $startupTarget = Join-Path $startupFolder "DeepCharts-startup.bat"
-$startupContent = "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\scripts\start-deepcharts.ps1`" -Background"
-try {
-    Set-Content -Path $startupTarget -Value $startupContent -Force -ErrorAction Stop
+$startupSrc = Join-Path $scriptRoot "startup.bat"
+if (Test-Path $startupSrc) {
+    Copy-Item -Path $startupSrc -Destination $startupTarget -Force
     Write-Host "[+] Startup script installed to $startupTarget"
     Write-Host "    DeepCharts will auto-start on every login (no admin needed)"
-} catch {
-    Write-Host "  [!] Failed to write startup script: $($_.Exception.Message)"
+} else {
+    Write-Host "  [!] startup.bat not found in scripts/"
 }
 
 # -- 8. Add Windows Defender exclusions --

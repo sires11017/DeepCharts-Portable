@@ -9,11 +9,21 @@ function Write-Log($msg) { if (-not $Background) { Write-Host $msg } }
 function Write-Err($msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red }
 
 # -- 0. Kill old processes --
-Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID } | Stop-Process -Force -ErrorAction SilentlyContinue
+# Only kill Python processes that are our proxies (check command line)
+Get-Process python -ErrorAction SilentlyContinue | ForEach-Object {
+    try {
+        $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)" -ErrorAction SilentlyContinue).CommandLine
+        if ($cmdLine -match "bridge_mitm_proxy|vol_hist_server") {
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            Write-Log "[*] Killed proxy process PID $($_.Id)"
+        }
+    } catch {}
+}
 Get-Process Deepchart* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process VolumetricaBridge -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process BridgeWrapper -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
+# Wait for OS to release ports after killing processes
+Start-Sleep -Seconds 3
 
 # -- 1. Find Python --
 . "$PSScriptRoot\find-python.ps1"

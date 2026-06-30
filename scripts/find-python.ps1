@@ -117,5 +117,5 @@ if (Test-Path $appDataPython) {
     if ($script:PythonExe) { return }
 }
 
-# 6. Last resort - return "python" and let caller handle it
-$script:PythonExe = "python"
+# 6. No Python found - return null (caller must handle)
+$script:PythonExe = $null

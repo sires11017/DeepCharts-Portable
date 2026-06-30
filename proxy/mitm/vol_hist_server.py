@@ -19,6 +19,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("vol-hist")
 
+# Cache for PowerShell signatures (session_key -> signature)
+_sig_cache = {}
+
 
 def encode_varint(value):
     """Encode an integer as a protobuf varint."""
@@ -116,7 +119,14 @@ async def handle_client(ws):
 
     async def respond(session_key):
         if session_key:
-            sig = get_powershell_signature(session_key)
+            # Use cached signature if available
+            if session_key in _sig_cache:
+                sig = _sig_cache[session_key]
+                log.info(f"  [SIGN] Using cached signature for session")
+            else:
+                sig = get_powershell_signature(session_key)
+                if sig:
+                    _sig_cache[session_key] = sig
 
             if not sig:
                 log.warning("  [RESPOND] Signature generation failed — sending unsigned fallback")

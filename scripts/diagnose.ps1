@@ -99,7 +99,7 @@ $checks = @(
     "proxy\mitm\vol_hist_server.py",
     "proxy\mitm\config.py",
     "certs\mitm_ca\ca.pem",
-    "certs\mitm_ca\cert.pem"
+    "certs\mitm_ca\ca.key"
 )
 foreach ($f in $checks) {
     $full = Join-Path $root $f

@@ -8,6 +8,7 @@ import asyncio
 import concurrent.futures
 import os
 import logging
+import logging.handlers
 import ssl
 import struct
 import sys
@@ -40,7 +41,9 @@ LOGFILE  = os.path.join(config.LOG_DIR, f"bridge_mitm_{datetime.now(timezone.utc
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
 log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.DEBUG)
-_file_handler   = logging.FileHandler(LOGFILE, encoding="utf-8")
+_file_handler   = logging.handlers.RotatingFileHandler(
+    LOGFILE, maxBytes=10*1024*1024, backupCount=3, encoding="utf-8"
+)
 _file_handler.setLevel(logging.DEBUG)
 _stream_handler = logging.StreamHandler(sys.stdout)
 _stream_handler.setLevel(logging.INFO)
