@@ -403,14 +403,14 @@ if (Test-Path $tempsDir) {
 # -- 7. Create auto-start on boot --
 Write-Host "[7/8] Setting up auto-start on boot..."
 $startupFolder = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
-$startupBat = Join-Path $scriptRoot "startup.bat"
 $startupTarget = Join-Path $startupFolder "DeepCharts-startup.bat"
-if (Test-Path $startupBat) {
-    Copy-Item -Path $startupBat -Destination $startupTarget -Force
+$startupContent = "@echo off`r`npowershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$root\scripts\start-deepcharts.ps1`" -Background"
+try {
+    Set-Content -Path $startupTarget -Value $startupContent -Force -ErrorAction Stop
     Write-Host "[+] Startup script installed to $startupTarget"
     Write-Host "    DeepCharts will auto-start on every login (no admin needed)"
-} else {
-    Write-Host "  (startup.bat not found in scripts/)"
+} catch {
+    Write-Host "  [!] Failed to write startup script: $($_.Exception.Message)"
 }
 
 # -- 8. Add Windows Defender exclusions --
