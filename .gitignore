@@ -32,6 +32,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# === Vendored protobuf (use system-installed google-protobuf) ===
+proxy/cqg/google/
+
 # === Visual Studio ===
 .vs/
 *.user

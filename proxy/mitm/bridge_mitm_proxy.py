@@ -9,6 +9,7 @@ import concurrent.futures
 import os
 import logging
 import logging.handlers
+import queue
 import ssl
 import struct
 import sys
@@ -70,12 +71,13 @@ for _path in possible_paths:
     if os.path.exists(_path):
         sys.path.insert(0, os.path.abspath(_path))
         try:
-            from WebAPI.webapi_2_pb2 import ClientMsg, ServerMsg, InformationReport
+            from WebAPI.webapi_2_pb2 import ClientMsg, ServerMsg, InformationReport, InformationRequest
             from WebAPI.user_session_2_pb2 import LogonResult, Ping, Pong
             from WebAPI.historical_2_pb2 import TimeBarReport, TimeBarRequest
             from WebAPI.market_data_2_pb2 import (
                 MarketDataSubscription, MarketDataSubscriptionStatus, RealTimeMarketData, Quote
             )
+            from WebAPI.metadata_2_pb2 import SymbolResolutionRequest
             PROTOBUF_AVAILABLE = True
             log.info(f"[IMPORT] CQG protobufs loaded from: {_path}")
             break
@@ -313,8 +315,66 @@ def patch_logon_protobuf(payload: bytes, mask_key: bytes, fin: int, opcode: int)
     return None
 
 
+# ─── Injection frame builders ───────────────────────────────────────────────────
+_inject_request_id = 100000
+
+def build_symbol_resolution_request(symbol: str):
+    """Build a ClientMsg frame containing an InformationRequest with SymbolResolutionRequest."""
+    global _inject_request_id
+    if not PROTOBUF_AVAILABLE:
+        return None
+    try:
+        srr = SymbolResolutionRequest()
+        srr.symbol = symbol
+
+        ir = InformationRequest()
+        ir.id = _inject_request_id
+        _inject_request_id += 1
+        ir.subscribe = True
+        ir.symbol_resolution_request.CopyFrom(srr)
+
+        cm = ClientMsg()
+        cm.information_requests.append(ir)
+
+        payload = cm.SerializeToString()
+        frame = build_ws_frame(2, payload, fin=1, mask=True)
+        log.info(f"  [INJECT] INFORMATION_REQUEST for symbol='{symbol}' (id={ir.id})")
+        return frame
+    except Exception as e:
+        log.error(f"  [INJECT] Failed to build symbol resolution request for '{symbol}': {e}")
+        return None
+
+
+def build_market_data_subscribe(contract_id: int, request_id: int = 0):
+    """Build a ClientMsg frame containing a MarketDataSubscription."""
+    global _inject_request_id
+    if not PROTOBUF_AVAILABLE:
+        return None
+    try:
+        rid = request_id if request_id else _inject_request_id
+        _inject_request_id += 1
+
+        mds = MarketDataSubscription()
+        mds.contract_id = contract_id
+        mds.request_id = rid
+        mds.level = config.MARKET_DATA_LEVEL
+
+        cm = ClientMsg()
+        cm.market_data_subscriptions.append(mds)
+
+        payload = cm.SerializeToString()
+        frame = build_ws_frame(2, payload, fin=1, mask=True)
+        log.info(f"  [INJECT] MARKET_DATA_SUBSCRIBE contract_id={contract_id} "
+                 f"level={mds.level} (request_id={rid})")
+        return frame
+    except Exception as e:
+        log.error(f"  [INJECT] Failed to build market data subscribe for contract_id={contract_id}: {e}")
+        return None
+
+
 # ─── Client → CQG forwarder ────────────────────────────────────────────────────
-async def forward_client_to_cqg(client_r, cqg_w, client_w, initial_remaining=b"", http_done=False, is_historical=False):
+async def forward_client_to_cqg(client_r, cqg_w, client_w, injection_queue,
+                                 initial_remaining=b"", http_done=False, is_historical=False):
     buf = FrameBuffer()
     if initial_remaining:
         buf.feed(initial_remaining)
@@ -359,6 +419,18 @@ async def forward_client_to_cqg(client_r, cqg_w, client_w, initial_remaining=b""
                 if frame_count % 100 == 0:
                     log.info(f"  [C->S] Forwarded {frame_count} frames so far")
 
+            # Drain any injection frames queued by the CQG->Client direction
+            injection_count = 0
+            while not injection_queue.empty():
+                try:
+                    inject_frame = injection_queue.get_nowait()
+                    cqg_w.write(inject_frame)
+                    injection_count += 1
+                except asyncio.QueueEmpty:
+                    break
+            if injection_count > 0:
+                log.info(f"  [INJECT] Sent {injection_count} injected frames to CQG")
+
             chunk = await client_r.read(65536)
             if not chunk:
                 log.info(f"  [C->S] Client closed connection. Total frames forwarded: {frame_count}")
@@ -389,7 +461,7 @@ async def run_in_thread(func, *args):
 
 
 # ─── CQG → Client forwarder ────────────────────────────────────────────────────
-async def forward_cqg_to_client(cqg_r, client_w, is_historical=False):
+async def forward_cqg_to_client(cqg_r, client_w, injection_queue, is_historical=False):
     http_done = False
     buf = FrameBuffer()
     frame_count = 0
@@ -437,8 +509,31 @@ async def forward_cqg_to_client(cqg_r, client_w, is_historical=False):
 
                 if opcode == 2:
                     if not is_historical:
-                        patched = await run_in_thread(process_and_patch_server_msg, payload, fin, opcode)
+                        events = queue.Queue()
+                        patched = await run_in_thread(
+                            process_and_patch_server_msg, payload, fin, opcode, events
+                        )
                         client_w.write(patched if patched is not None else raw_frame)
+
+                        # Process detected events and queue injection frames
+                        while not events.empty():
+                            try:
+                                event = events.get_nowait()
+                            except queue.Empty:
+                                break
+                            if event[0] == "login_success":
+                                log.info("  [INJECT] Login success detected — requesting symbol resolution for all symbols")
+                                for sym in config.SYMBOLS:
+                                    frame = build_symbol_resolution_request(sym)
+                                    if frame:
+                                        await injection_queue.put(frame)
+                            elif event[0] == "symbol_resolved":
+                                contract_id = event[1]
+                                symbol = event[2]
+                                log.info(f"  [INJECT] Symbol '{symbol}' resolved to contract_id={contract_id} — subscribing to market data")
+                                frame = build_market_data_subscribe(contract_id)
+                                if frame:
+                                    await injection_queue.put(frame)
                     else:
                         client_w.write(raw_frame)
                 else:
@@ -454,9 +549,11 @@ async def forward_cqg_to_client(cqg_r, client_w, is_historical=False):
         log.error(f"  [S->C] Error after {frame_count} frames: {e}")
 
 
-def process_and_patch_server_msg(payload: bytes, fin: int, opcode: int):
+def process_and_patch_server_msg(payload: bytes, fin: int, opcode: int,
+                                  events_out: queue.Queue = None):
     """
     Called inside background thread. Parses the message once, logs it, patches if needed.
+    If events_out is provided, detected events are put into the queue for injection.
     """
     if not PROTOBUF_AVAILABLE:
         return None
@@ -465,6 +562,24 @@ def process_and_patch_server_msg(payload: bytes, fin: int, opcode: int):
         msg.ParseFromString(payload)
 
         log_server_msg_parsed(msg)
+
+        # Detect events for injection
+        if events_out is not None:
+            if msg.HasField("logon_result") and msg.logon_result.result_code == 0:
+                log.info("  [EVENT] LOGIN_SUCCESS detected — will inject symbol resolution requests")
+                events_out.put(("login_success", None))
+
+            for ir in msg.information_reports:
+                if ir.HasField("symbol_resolution_report"):
+                    srr = ir.symbol_resolution_report
+                    try:
+                        cm = srr.contract_metadata
+                        symbol = cm.contract_symbol or cm.cqg_contract_symbol or ""
+                        log.info(f"  [EVENT] SYMBOL_RESOLVED: contract_id={cm.contract_id} "
+                                 f"symbol='{symbol}'")
+                        events_out.put(("symbol_resolved", cm.contract_id, symbol))
+                    except Exception as e:
+                        log.debug(f"  [EVENT] Symbol resolution decode skipped: {e}")
 
         patched = False
         for tsr in msg.time_and_sales_reports:
@@ -724,8 +839,12 @@ async def handle(client_r, client_w):
     last_server_msg_time = [time.monotonic()]
     stop_event = asyncio.Event()
 
-    t1 = asyncio.create_task(forward_client_to_cqg(client_r, cqg_w, client_w, initial_remaining=remaining, http_done=http_done, is_historical=is_historical))
-    t2 = asyncio.create_task(forward_cqg_to_client(cqg_r, client_w, is_historical=is_historical))
+    # Injection queue: CQG->Client direction puts frames here, Client->CQG drains and sends them
+    injection_queue = asyncio.Queue()
+
+    t1 = asyncio.create_task(forward_client_to_cqg(client_r, cqg_w, client_w, injection_queue,
+                                                    initial_remaining=remaining, http_done=http_done, is_historical=is_historical))
+    t2 = asyncio.create_task(forward_cqg_to_client(cqg_r, client_w, injection_queue, is_historical=is_historical))
 
     # Start watchdog if this is a CQG (non-historical) connection
     t3 = None
@@ -765,6 +884,8 @@ async def main():
     log.info("=" * 60)
     log.info(f"[*] Bridge MITM Proxy listening on {config.BRIDGE_PROXY_BIND_HOST}:{PROXY_PORT}")
     log.info(f"[*] Upstream: {REAL_CQG_HOST}:{REAL_CQG_PORT} (SNI={SNI_HOST})")
+    log.info(f"[*] Auto-subscribe symbols: {', '.join(config.SYMBOLS)}")
+    log.info(f"[*] Market data level: {config.MARKET_DATA_LEVEL}")
     log.info(f"[*] Full log: {LOGFILE}")
     log.info("=" * 60)
 

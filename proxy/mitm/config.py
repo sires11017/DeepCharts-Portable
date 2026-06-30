@@ -81,3 +81,13 @@ BRIDGE_LOCAL_MOCK_PORT = int(os.environ.get("BRIDGE_LOCAL_MOCK_PORT", "12010"))
 BRIDGE_PROXY_BIND_HOST = os.environ.get("BRIDGE_PROXY_BIND_HOST", "0.0.0.0")
 BRIDGE_HTTP_TIMEOUT = float(os.environ.get("BRIDGE_HTTP_TIMEOUT", "2.0"))
 BRIDGE_READ_SIZE = int(os.environ.get("BRIDGE_READ_SIZE", "65536"))
+
+# Symbols to auto-subscribe after CQG login (comma-separated)
+DEFAULT_SYMBOLS = os.environ.get(
+    "CQG_SYMBOLS",
+    "NQ-CME,ES-CME,CL-CME,GC-CME,SI-CME,MNQ-CME,MES-CME"
+)
+SYMBOLS = [s.strip() for s in DEFAULT_SYMBOLS.split(",") if s.strip()]
+
+# Market data subscription level (3=LEVEL_TRADES_BBA_VOLUMES)
+MARKET_DATA_LEVEL = int(os.environ.get("CQG_MARKET_DATA_LEVEL", "3"))
