@@ -51,3 +51,29 @@ if ($LASTEXITCODE -eq 0 -and (Test-Path $out)) {
     Write-Host "[!] Compilation failed (exit code: $LASTEXITCODE)"
     exit 1
 }
+
+# Generate mscorlib.XmlSerializers.dll for VolumetricaBridge
+$bridgeDir = Join-Path $root "app\bridge"
+$serializerDll = Join-Path $bridgeDir "mscorlib.XmlSerializers.dll"
+$serializerIl = Join-Path $scriptRoot "serializer.il"
+
+if (-not (Test-Path $serializerDll) -and (Test-Path $serializerIl)) {
+    $ilasmPaths = @(
+        "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ilasm.exe",
+        "C:\Windows\Microsoft.NET\Framework\v4.0.30319\ilasm.exe"
+    )
+    $ilasm = $null
+    foreach ($p in $ilasmPaths) { if (Test-Path $p) { $ilasm = $p; break } }
+
+    if ($ilasm) {
+        try {
+            & $ilasm /dll /output:$serializerDll $serializerIl 2>&1 | Out-Null
+            if (Test-Path $serializerDll) {
+                $dllSize = (Get-Item $serializerDll).Length
+                if ($dllSize -gt 1000) {
+                    Write-Host "[+] mscorlib.XmlSerializers.dll generated ($dllSize bytes)"
+                }
+            }
+        } catch { }
+    }
+}

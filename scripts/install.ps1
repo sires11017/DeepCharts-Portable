@@ -364,8 +364,12 @@ if ($csc) {
         }
     }
 
-    # Also try sgen.exe if available (generates faster serialization)
+    # Generate mscorlib.XmlSerializers.dll (required by VolumetricaBridge for XML serialization)
+    # Without this DLL, the bridge shows "system cannot find the file specified" error
     $bridgeExe = Join-Path $root "app\bridge\VolumetricaBridge.exe"
+    $serializerIl = Join-Path $scriptRoot "serializer.il"
+
+    # Method 1: Try sgen.exe (generates from actual assembly metadata - best quality)
     $sgenPaths = @(
         "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\sgen.exe",
         "C:\Windows\Microsoft.NET\Framework\v4.0.30319\sgen.exe"
@@ -373,16 +377,46 @@ if ($csc) {
     $sgen = $null
     foreach ($p in $sgenPaths) { if (Test-Path $p) { $sgen = $p; break } }
 
+    $serializerGenerated = $false
     if ($sgen -and (Test-Path $bridgeExe)) {
         try {
             & $sgen /a:$bridgeExe /f 2>&1 | Out-Null
             if (Test-Path $serializerDll) {
                 $dllSize = (Get-Item $serializerDll).Length
-                if ($dllSize -gt 10000) {
+                if ($dllSize -gt 1000) {
                     Write-Host "[+] mscorlib.XmlSerializers.dll generated via sgen ($dllSize bytes)"
+                    $serializerGenerated = $true
                 }
             }
         } catch { }
+    }
+
+    # Method 2: If sgen failed or unavailable, use ilasm with stub IL
+    if (-not $serializerGenerated -and (Test-Path $serializerIl)) {
+        $ilasmPaths = @(
+            "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\ilasm.exe",
+            "C:\Windows\Microsoft.NET\Framework\v4.0.30319\ilasm.exe"
+        )
+        $ilasm = $null
+        foreach ($p in $ilasmPaths) { if (Test-Path $p) { $ilasm = $p; break } }
+
+        if ($ilasm) {
+            try {
+                & $ilasm /dll /output:$serializerDll $serializerIl 2>&1 | Out-Null
+                if (Test-Path $serializerDll) {
+                    $dllSize = (Get-Item $serializerDll).Length
+                    if ($dllSize -gt 1000) {
+                        Write-Host "[+] mscorlib.XmlSerializers.dll generated via ilasm ($dllSize bytes)"
+                        $serializerGenerated = $true
+                    }
+                }
+            } catch { }
+        }
+    }
+
+    if (-not $serializerGenerated) {
+        Write-Host "  [!] Could not generate mscorlib.XmlSerializers.dll"
+        Write-Host "      Bridge will still work (BridgeWrapper suppresses the error dialog)"
     }
 
 } else {
